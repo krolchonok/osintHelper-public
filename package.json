@@ -1,0 +1,27 @@
+{
+  "name": "node-sqlite-app",
+  "version": "1.0.0",
+  "description": "Recon backend on Node.js + SQLite (no MySQL/Redis)",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "worker": "node src/worker.js",
+    "auth:init-admin": "node src/scripts/init-admin.js",
+    "tokens:export": "node src/scripts/export-provider-tokens.js",
+    "tokens:import": "node src/scripts/import-provider-tokens.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.6.2",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  }
+}

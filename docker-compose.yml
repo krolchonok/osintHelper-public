@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 3001
+      SQLITE_PATH: /data/app.db
+      ENABLE_INLINE_WORKER: "true"
+    ports:
+      - "3001:3001"
+    volumes:
+      - sqlite_data:/data
+
+volumes:
+  sqlite_data:

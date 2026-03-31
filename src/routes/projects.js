@@ -1,0 +1,1551 @@
+const express = require("express");
+const net = require("node:net");
+const { requireApiUser } = require("../lib/auth");
+const { parseDomainInput, normalizeDomain, isValidDomain } = require("../lib/domains");
+const { startRun } = require("../lib/jobs");
+const { enqueueScanJob, removeScanJobsByRunIds } = require("../lib/job-queue");
+const { getDbState } = require("../db");
+const { createId, nowIso } = require("../lib/utils");
+const { SUPPORTED_PASSIVE_SOURCE_IDS } = require("../lib/passive-scan");
+const { fetchDomainWhois: fetchDomainWhoisLib } = require("../lib/whois");
+const { getProviderRuntimeSettings } = require("../lib/provider-settings");
+const {
+  getPrimaryProjectDomain,
+  isHostInProjectScope,
+  listProjectDomains,
+  upsertProjectDomain,
+} = require("../lib/project-domains");
+
+const router = express.Router();
+const SUBDOMAIN_PAGE_LIMITS = new Set([100, 250, 500]);
+const DEFAULT_SUBDOMAIN_PAGE_LIMIT = 100;
+
+function parsePositiveInt(raw, fallback) {
+  const value = Number.parseInt(String(raw || ""), 10);
+  if (!Number.isFinite(value) || value < 1) {
+    return fallback;
+  }
+  return value;
+}
+
+function normalizeSubdomainPageLimit(raw) {
+  const value = parsePositiveInt(raw, DEFAULT_SUBDOMAIN_PAGE_LIMIT);
+  if (!SUBDOMAIN_PAGE_LIMITS.has(value)) {
+    return DEFAULT_SUBDOMAIN_PAGE_LIMIT;
+  }
+  return value;
+}
+
+function normalizeHostInput(rawHost) {
+  return normalizeDomain(String(rawHost || "")).replace(/\.$/, "");
+}
+
+function formatProjectScopeMessage(projectDomains) {
+  if (!projectDomains.length) {
+    return "Host must be in project scope";
+  }
+  return `Host must be in project scope (${projectDomains.map((domain) => `*.${domain}`).join(", ")})`;
+}
+
+function extractRdapEntityName(entity) {
+  const card = Array.isArray(entity?.vcardArray) ? entity.vcardArray : [];
+  const fields = Array.isArray(card[1]) ? card[1] : [];
+  for (const row of fields) {
+    if (!Array.isArray(row) || row.length < 4) {
+      continue;
+    }
+    if (String(row[0]).toLowerCase() === "fn") {
+      return String(row[3] || "").trim();
+    }
+  }
+  return "";
+}
+
+async function fetchDomainWhois(domain) {
+  function queryWhoisServer(server, query, timeoutMs = 12000) {
+    return new Promise((resolve, reject) => {
+      const socket = net.createConnection({ host: server, port: 43 });
+      let settled = false;
+      let chunks = "";
+
+      const finish = (error, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.destroy();
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(value);
+      };
+
+      socket.setEncoding("utf8");
+      socket.setTimeout(timeoutMs);
+
+      socket.on("connect", () => {
+        socket.write(`${query}\r\n`);
+      });
+      socket.on("data", (data) => {
+        chunks += String(data || "");
+      });
+      socket.on("end", () => finish(null, chunks));
+      socket.on("timeout", () => finish(new Error("WHOIS timeout")));
+      socket.on("error", (error) => finish(error));
+    });
+  }
+
+  function parseWhoisByKey(text, keys) {
+    const lines = String(text || "").split(/\r?\n/);
+    for (const key of keys) {
+      const lowerKey = String(key).toLowerCase();
+      const line = lines.find((row) => String(row).toLowerCase().startsWith(`${lowerKey}:`));
+      if (!line) {
+        continue;
+      }
+      const value = line.slice(line.indexOf(":") + 1).trim();
+      if (value) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function parseWhoisList(text, keys) {
+    const lines = String(text || "").split(/\r?\n/);
+    const out = [];
+    for (const line of lines) {
+      const normalized = String(line || "").trim();
+      if (!normalized || normalized.startsWith("%") || normalized.startsWith("#")) {
+        continue;
+      }
+      const idx = normalized.indexOf(":");
+      if (idx <= 0) {
+        continue;
+      }
+      const key = normalized.slice(0, idx).trim().toLowerCase();
+      const value = normalized.slice(idx + 1).trim();
+      if (!value) {
+        continue;
+      }
+      if (keys.includes(key)) {
+        out.push(value.toLowerCase());
+      }
+    }
+    return Array.from(new Set(out));
+  }
+
+  async function requestRdap(endpoint) {
+    const response = await fetch(endpoint, { method: "GET" });
+    const text = await response.text();
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    try {
+      return text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error("WHOIS response is not valid JSON");
+    }
+  }
+
+  function normalizeRdapBase(base) {
+    const value = String(base || "").trim();
+    if (!value) {
+      return "";
+    }
+    return value.endsWith("/") ? value : `${value}/`;
+  }
+
+  const endpoints = [];
+  endpoints.push(`https://rdap.org/domain/${encodeURIComponent(domain)}`);
+
+  try {
+    const bootstrap = await fetch("https://data.iana.org/rdap/dns.json", { method: "GET" });
+    if (bootstrap.ok) {
+      const data = await bootstrap.json();
+      const services = Array.isArray(data?.services) ? data.services : [];
+      const domainParts = String(domain).toLowerCase().split(".");
+      const tld = domainParts.length > 1 ? domainParts[domainParts.length - 1] : "";
+      const match = services.find((entry) => {
+        const tlds = Array.isArray(entry?.[0]) ? entry[0].map((item) => String(item).toLowerCase()) : [];
+        return tlds.includes(tld);
+      });
+
+      const urls = Array.isArray(match?.[1]) ? match[1] : [];
+      for (const base of urls) {
+        const normalized = normalizeRdapBase(base);
+        if (!normalized) {
+          continue;
+        }
+        endpoints.push(`${normalized}domain/${encodeURIComponent(domain)}`);
+      }
+    }
+  } catch {
+    // Ignore bootstrap failure and keep rdap.org fallback only.
+  }
+
+  let data = null;
+  let lastStatus = null;
+  let usedEndpoint = endpoints[0];
+  for (const endpoint of Array.from(new Set(endpoints))) {
+    try {
+      data = await requestRdap(endpoint);
+      usedEndpoint = endpoint;
+      break;
+    } catch (error) {
+      if (typeof error?.status === "number") {
+        lastStatus = error.status;
+      }
+      usedEndpoint = endpoint;
+    }
+  }
+
+  if (!data) {
+    // Fallback to classic WHOIS (port 43) when RDAP is missing.
+    const tld = String(domain).toLowerCase().split(".").pop();
+    if (!tld) {
+      throw new Error("WHOIS/RDAP not found for this domain");
+    }
+
+    let ianaText = "";
+    try {
+      ianaText = await queryWhoisServer("whois.iana.org", tld);
+    } catch {
+      ianaText = "";
+    }
+
+    const whoisServer =
+      parseWhoisByKey(ianaText, ["whois"]) ||
+      parseWhoisByKey(ianaText, ["refer"]) ||
+      null;
+
+    if (!whoisServer) {
+      if (lastStatus === 404) {
+        throw new Error("WHOIS/RDAP not found for this domain");
+      }
+      throw new Error(`WHOIS request failed (${lastStatus || "unknown error"})`);
+    }
+
+    let whoisText = "";
+    try {
+      whoisText = await queryWhoisServer(whoisServer, domain);
+    } catch {
+      whoisText = "";
+    }
+
+    if (!whoisText.trim()) {
+      throw new Error("WHOIS/RDAP not found for this domain");
+    }
+
+    const registrar = parseWhoisByKey(whoisText, ["registrar", "registrar name", "org"]);
+    const inn = parseWhoisByKey(whoisText, ["inn", "taxpayer-id", "tin"]);
+    const createdAt = parseWhoisByKey(whoisText, ["creation date", "created", "created on", "created-date"]);
+    const updatedAt = parseWhoisByKey(whoisText, ["updated date", "last updated on", "changed", "changed-date"]);
+    const expiresAt = parseWhoisByKey(whoisText, ["registry expiry date", "expiration date", "paid-till", "expires", "expiry date"]);
+    const statusRaw = parseWhoisList(whoisText, ["status", "state", "domain status"]);
+    const nameservers = parseWhoisList(whoisText, ["name server", "nserver", "nameserver", "ns"]);
+
+    return {
+      domain,
+      registrar: registrar || null,
+      inn: inn || null,
+      registrant: parseWhoisByKey(whoisText, ["person", "org", "registrant", "registrant organization"]) || null,
+      registrarWhois: whoisServer || null,
+      country: parseWhoisByKey(whoisText, ["country", "registrant country"]) || null,
+      emails: parseWhoisList(whoisText, ["e-mail", "email", "admin email", "registrant email"]),
+      dnssec: parseWhoisByKey(whoisText, ["dnssec"]) || null,
+      status: statusRaw,
+      nameservers,
+      createdAt: createdAt || null,
+      updatedAt: updatedAt || null,
+      expiresAt: expiresAt || null,
+      rdapUrl: `whois://${whoisServer}`,
+    };
+  }
+
+  const statuses = Array.isArray(data?.status) ? data.status.map((item) => String(item)) : [];
+  const nameservers = Array.isArray(data?.nameservers)
+    ? data.nameservers
+        .map((item) => String(item?.ldhName || item?.unicodeName || "").toLowerCase().trim())
+        .filter(Boolean)
+    : [];
+
+  const events = Array.isArray(data?.events) ? data.events : [];
+  const findEventDate = (key) => {
+    const event = events.find((row) => String(row?.eventAction || "").toLowerCase() === key);
+    return event?.eventDate || null;
+  };
+
+  const entities = Array.isArray(data?.entities) ? data.entities : [];
+  const registrarEntity = entities.find((entity) =>
+    Array.isArray(entity?.roles) &&
+    entity.roles.map((role) => String(role).toLowerCase()).includes("registrar"),
+  );
+  const registrar = extractRdapEntityName(registrarEntity);
+
+  return {
+    domain,
+    registrar: registrar || null,
+    inn: null,
+    registrant: null,
+    registrarWhois: null,
+    country: null,
+    emails: [],
+    dnssec: null,
+    status: statuses,
+    nameservers,
+    createdAt: findEventDate("registration"),
+    updatedAt: findEventDate("last changed"),
+    expiresAt: findEventDate("expiration"),
+    rdapUrl: usedEndpoint,
+  };
+}
+
+function mapRun(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    type: row.type,
+    taskKind: row.task_kind || null,
+    scanScope: row.scan_scope || "core",
+    cancelRequested: Boolean(row.cancel_requested),
+    status: row.status,
+    progress: row.progress,
+    stage: row.stage,
+    processed: row.processed,
+    total: row.total,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    error: row.error,
+    createdAt: row.created_at,
+  };
+}
+
+function getCachedWhois(projectId) {
+  const { db } = getDbState();
+  const row = db
+    .prepare("SELECT data_json, source, updated_at FROM project_whois WHERE project_id = ? LIMIT 1")
+    .get(projectId);
+  if (!row || !row.data_json) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(row.data_json);
+    return {
+      ...data,
+      source: row.source || data.source || null,
+      cachedAt: row.updated_at || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedWhois(projectId, whois) {
+  const { db } = getDbState();
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO project_whois (project_id, data_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(project_id)
+    DO UPDATE SET
+      data_json = excluded.data_json,
+      source = excluded.source,
+      updated_at = excluded.updated_at
+  `).run(projectId, JSON.stringify(whois || {}), whois?.source || whois?.rdapUrl || null, now, now);
+}
+
+function getCachedVtDeep(projectId) {
+  const { db } = getDbState();
+  const row = db
+    .prepare("SELECT data_json, source, updated_at FROM project_vt_deep WHERE project_id = ? LIMIT 1")
+    .get(projectId);
+  if (!row || !row.data_json) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(row.data_json);
+    return {
+      ...data,
+      source: row.source || data.source || "virustotal",
+      cachedAt: row.updated_at || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedVtDeep(projectId, result) {
+  const { db } = getDbState();
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO project_vt_deep (project_id, data_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(project_id)
+    DO UPDATE SET
+      data_json = excluded.data_json,
+      source = excluded.source,
+      updated_at = excluded.updated_at
+  `).run(projectId, JSON.stringify(result || {}), "virustotal", now, now);
+}
+
+function fetchRunEvents(runId, limit = 30) {
+  const { db } = getDbState();
+  return db
+    .prepare(`
+      SELECT id, progress, stage, processed, total, created_at
+      FROM scan_run_events
+      WHERE run_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
+    `)
+    .all(runId, limit)
+    .map((row) => ({
+      id: row.id,
+      progress: row.progress,
+      stage: row.stage,
+      processed: row.processed,
+      total: row.total,
+      createdAt: row.created_at,
+    }));
+}
+
+function fetchProjectSubdomains(projectId, options = {}) {
+  const { db } = getDbState();
+  const requestedPage = parsePositiveInt(options.page, 1);
+  const limit = normalizeSubdomainPageLimit(options.limit);
+  const total = Number(
+    db.prepare("SELECT COUNT(*) AS c FROM subdomains WHERE project_id = ?").get(projectId)?.c || 0,
+  );
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const page = Math.max(1, Math.min(requestedPage, totalPages));
+  const offset = (page - 1) * limit;
+
+  const rows = db
+    .prepare(`
+      SELECT id, host, is_root, created_at, updated_at
+      FROM subdomains
+      WHERE project_id = ?
+      ORDER BY host ASC
+      LIMIT ? OFFSET ?
+    `)
+    .all(projectId, limit, offset);
+  const subdomainIds = rows.map((row) => row.id);
+
+  const sourcesBySubdomainId = new Map();
+  const dnsRecordsBySubdomainId = new Map();
+  if (subdomainIds.length) {
+    const placeholders = subdomainIds.map(() => "?").join(",");
+    const sourceRows = db
+      .prepare(`
+        SELECT subdomain_id, source, created_at
+        FROM subdomain_sources
+        WHERE subdomain_id IN (${placeholders})
+        ORDER BY source ASC
+      `)
+      .all(...subdomainIds);
+
+    for (const row of sourceRows) {
+      const key = String(row.subdomain_id);
+      if (!sourcesBySubdomainId.has(key)) {
+        sourcesBySubdomainId.set(key, []);
+      }
+      sourcesBySubdomainId.get(key).push({
+        source: row.source,
+        createdAt: row.created_at,
+      });
+    }
+
+    const dnsRows = db
+      .prepare(`
+        SELECT id, subdomain_id, resolver, record_type, value, data_json, created_at
+        FROM dns_records
+        WHERE subdomain_id IN (${placeholders}) AND record_type IN ('A', 'AAAA')
+        ORDER BY created_at DESC
+      `)
+      .all(...subdomainIds);
+
+    for (const row of dnsRows) {
+      const key = String(row.subdomain_id);
+      if (!dnsRecordsBySubdomainId.has(key)) {
+        dnsRecordsBySubdomainId.set(key, []);
+      }
+      dnsRecordsBySubdomainId.get(key).push({
+        id: row.id,
+        resolver: row.resolver,
+        recordType: row.record_type,
+        value: row.value,
+        dataJson: row.data_json,
+        createdAt: row.created_at,
+      });
+    }
+  }
+
+  const subdomains = rows.map((row) => {
+    const key = String(row.id);
+    return {
+      id: row.id,
+      host: row.host,
+      isRoot: Boolean(row.is_root),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      sources: sourcesBySubdomainId.get(key) || [],
+      dnsRecords: dnsRecordsBySubdomainId.get(key) || [],
+    };
+  });
+
+  return {
+    subdomains,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasPrev: page > 1,
+      hasNext: page < totalPages,
+    },
+  };
+}
+
+function mapProjectWithDomains(project, extra = {}) {
+  const domains = listProjectDomains(project.id);
+  const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+  return {
+    id: project.id,
+    domain: primaryDomain,
+    primaryDomain,
+    domains: domains.map((item) => item.domain),
+    domainItems: domains,
+    createdAt: project.created_at,
+    updatedAt: project.updated_at,
+    ...extra,
+  };
+}
+
+function formatUnixTime(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    return null;
+  }
+  return new Date(num * 1000).toISOString();
+}
+
+function mapVtFileItem(item, relationship) {
+  const attributes = item?.attributes || {};
+  const id = String(item?.id || "").trim();
+  if (!id) {
+    return null;
+  }
+
+  const name =
+    String(attributes.meaningful_name || "").trim() ||
+    (Array.isArray(attributes.names) && attributes.names.length ? String(attributes.names[0] || "").trim() : "") ||
+    id;
+
+  return {
+    id,
+    relationship,
+    name,
+    type: String(item?.type || "file"),
+    sha256: String(attributes.sha256 || id),
+    size: Number(attributes.size) || null,
+    firstSeen: formatUnixTime(attributes.first_submission_date),
+    lastSeen: formatUnixTime(attributes.last_submission_date),
+    positives:
+      Number(attributes.last_analysis_stats?.malicious || 0) +
+      Number(attributes.last_analysis_stats?.suspicious || 0),
+    total:
+      Number(attributes.last_analysis_stats?.harmless || 0) +
+      Number(attributes.last_analysis_stats?.undetected || 0) +
+      Number(attributes.last_analysis_stats?.malicious || 0) +
+      Number(attributes.last_analysis_stats?.suspicious || 0) +
+      Number(attributes.last_analysis_stats?.timeout || 0),
+    vtLink: `https://www.virustotal.com/gui/file/${encodeURIComponent(id)}`,
+  };
+}
+
+async function fetchVtDeepForDomain(domain, token) {
+  const headers = { "x-apikey": token };
+  const relationships = ["referrer_files", "communicating_files"];
+  const files = [];
+  const warnings = [];
+  const stats = {};
+
+  for (const relationship of relationships) {
+    let cursor = "";
+    let collected = 0;
+    const maxPages = 3;
+    const pageSize = 40;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const endpoint =
+        `https://www.virustotal.com/api/v3/domains/${encodeURIComponent(domain)}/${relationship}` +
+        `?limit=${pageSize}` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+
+      const response = await fetch(endpoint, { method: "GET", headers });
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+
+      if (!response.ok) {
+        warnings.push(`${relationship}: HTTP ${response.status}`);
+        break;
+      }
+
+      const rows = Array.isArray(data?.data) ? data.data : [];
+      for (const row of rows) {
+        const mapped = mapVtFileItem(row, relationship);
+        if (mapped) {
+          files.push(mapped);
+          collected += 1;
+        }
+      }
+
+      const next = String(data?.meta?.cursor || "");
+      if (!next || !rows.length) {
+        break;
+      }
+      cursor = next;
+    }
+
+    stats[relationship] = collected;
+  }
+
+  const unique = new Map();
+  for (const row of files) {
+    const key = `${row.relationship}:${row.id}`;
+    if (!unique.has(key)) {
+      unique.set(key, row);
+    }
+  }
+
+  return {
+    domain,
+    stats,
+    warnings,
+    files: Array.from(unique.values()),
+    loadedAt: nowIso(),
+  };
+}
+
+router.get("/", requireApiUser(), (_req, res) => {
+  const { db } = getDbState();
+  const projects = db
+    .prepare(`
+      SELECT
+        p.id,
+        p.domain,
+        p.created_at,
+        p.updated_at,
+        (SELECT COUNT(*) FROM subdomains s WHERE s.project_id = p.id) AS subdomains_count,
+        (SELECT COUNT(*) FROM scan_runs r WHERE r.project_id = p.id) AS runs_count,
+        (
+          SELECT r2.id
+          FROM scan_runs r2
+          WHERE r2.project_id = p.id
+          ORDER BY r2.created_at DESC
+          LIMIT 1
+        ) AS last_run_id
+      FROM projects p
+      ORDER BY p.created_at DESC
+    `)
+    .all();
+
+  const selectRun = db.prepare(`
+    SELECT id, type, scan_scope, status, created_at
+    FROM scan_runs
+    WHERE id = ?
+    LIMIT 1
+  `);
+
+  const data = projects.map((project) => {
+    const lastRun = project.last_run_id ? selectRun.get(project.last_run_id) : null;
+    return mapProjectWithDomains(project, {
+      counts: {
+        subdomains: Number(project.subdomains_count),
+        runs: Number(project.runs_count),
+      },
+      lastRun: lastRun
+        ? {
+            id: lastRun.id,
+            type: lastRun.type,
+            scanScope: lastRun.scan_scope || "core",
+            status: lastRun.status,
+            createdAt: lastRun.created_at,
+          }
+        : null,
+    });
+  });
+
+  res.json({ projects: data });
+});
+
+router.post("/bulk", requireApiUser(), (req, res) => {
+  const input = req.body?.input;
+  if (!input || !String(input).trim()) {
+    res.status(400).json({ error: "Input is required" });
+    return;
+  }
+
+  const domains = parseDomainInput(String(input));
+  if (!domains.length) {
+    res.status(400).json({ error: "No valid domains found in input" });
+    return;
+  }
+
+  const { db } = getDbState();
+  const existingRows = db
+    .prepare(`SELECT domain FROM project_domains WHERE domain IN (${domains.map(() => "?").join(",")})`)
+    .all(...domains);
+
+  const existingSet = new Set(existingRows.map((item) => item.domain));
+  const toCreate = domains.filter((domain) => !existingSet.has(domain));
+
+  if (toCreate.length > 0) {
+    const insertStmt = db.prepare(`
+      INSERT OR IGNORE INTO projects (id, domain, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    const insertDomainStmt = db.prepare(`
+      INSERT OR IGNORE INTO project_domains (id, project_id, domain, is_primary, created_at, updated_at)
+      VALUES (?, ?, ?, 1, ?, ?)
+    `);
+
+    const tx = db.transaction((domainList) => {
+      for (const domain of domainList) {
+        const projectId = createId();
+        const now = nowIso();
+        insertStmt.run(projectId, domain, now, now);
+        insertDomainStmt.run(createId(), projectId, domain, now, now);
+      }
+    });
+
+    tx(toCreate);
+  }
+
+  const createdProjects = db
+    .prepare(`
+      SELECT id, domain, created_at
+      FROM projects
+      WHERE domain IN (${domains.map(() => "?").join(",")})
+      ORDER BY created_at DESC
+    `)
+    .all(...domains)
+    .map((row) => mapProjectWithDomains(row));
+
+  res.json({
+    totalInput: domains.length,
+    created: toCreate.length,
+    existed: domains.length - toCreate.length,
+    projects: createdProjects,
+  });
+});
+
+router.get("/:id", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db
+    .prepare("SELECT id, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const counts = {
+    subdomains: Number(db.prepare("SELECT COUNT(*) AS c FROM subdomains WHERE project_id = ?").get(id).c),
+    dnsRecords: Number(db.prepare("SELECT COUNT(*) AS c FROM dns_records WHERE project_id = ?").get(id).c),
+    runs: Number(db.prepare("SELECT COUNT(*) AS c FROM scan_runs WHERE project_id = ?").get(id).c),
+  };
+
+  const runs = db
+    .prepare(`
+      SELECT id, project_id, type, task_kind, scan_scope, cancel_requested, status, progress, stage, processed, total, started_at, finished_at, error, created_at
+      FROM scan_runs
+      WHERE project_id = ?
+      ORDER BY created_at DESC
+      LIMIT 20
+    `)
+    .all(id)
+    .map((row) => ({
+      ...mapRun(row),
+      events: fetchRunEvents(row.id, 30),
+    }));
+
+  const whois = getCachedWhois(id);
+
+  res.json({
+    project: mapProjectWithDomains(project, {
+      counts,
+      runs,
+      whois,
+    }),
+  });
+});
+
+router.post("/:id/domains", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db
+    .prepare("SELECT id, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const domain = normalizeDomain(String(req.body?.domain || ""));
+  if (!domain || !isValidDomain(domain)) {
+    res.status(400).json({ error: "Invalid domain" });
+    return;
+  }
+
+  const existingOwner = db
+    .prepare("SELECT project_id FROM project_domains WHERE domain = ? LIMIT 1")
+    .get(domain);
+  if (existingOwner && String(existingOwner.project_id) !== String(project.id)) {
+    res.status(409).json({ error: "This domain already belongs to another project" });
+    return;
+  }
+
+  const now = nowIso();
+  const tx = db.transaction(() => {
+    upsertProjectDomain(project.id, domain, { isPrimary: false });
+    db.prepare(`
+      INSERT INTO subdomains (id, project_id, host, is_root, created_at, updated_at)
+      VALUES (?, ?, ?, 1, ?, ?)
+      ON CONFLICT(project_id, host)
+      DO UPDATE SET
+        is_root = 1,
+        updated_at = excluded.updated_at
+    `).run(createId(), project.id, domain, now, now);
+  });
+
+  tx();
+
+  res.json({
+    ok: true,
+    project: mapProjectWithDomains(project, {
+      counts: {
+        subdomains: Number(db.prepare("SELECT COUNT(*) AS c FROM subdomains WHERE project_id = ?").get(id).c),
+        dnsRecords: Number(db.prepare("SELECT COUNT(*) AS c FROM dns_records WHERE project_id = ?").get(id).c),
+        runs: Number(db.prepare("SELECT COUNT(*) AS c FROM scan_runs WHERE project_id = ?").get(id).c),
+      },
+      runs: [],
+      whois: getCachedWhois(id),
+    }),
+  });
+});
+
+router.get("/:id/runs", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const runs = db
+    .prepare(`
+      SELECT id, project_id, type, task_kind, scan_scope, cancel_requested, status, progress, stage, processed, total, started_at, finished_at, error, created_at
+      FROM scan_runs
+      WHERE project_id = ?
+      ORDER BY created_at DESC
+      LIMIT 20
+    `)
+    .all(id)
+    .map((row) => ({
+      ...mapRun(row),
+      events: fetchRunEvents(row.id, 30),
+    }));
+
+  res.json({ runs });
+});
+
+router.get("/:id/subdomains", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const page = parsePositiveInt(req.query.page, 1);
+  const limit = normalizeSubdomainPageLimit(req.query.limit);
+  const payload = fetchProjectSubdomains(id, { page, limit });
+  res.json(payload);
+});
+
+function selectProjectSubdomainsByIds(projectId, subdomainIds) {
+  const { db } = getDbState();
+  const normalized = Array.from(new Set((subdomainIds || []).map((item) => String(item || "").trim()).filter(Boolean)));
+  if (!normalized.length) {
+    return [];
+  }
+  const placeholders = normalized.map(() => "?").join(",");
+  return db
+    .prepare(`SELECT id, host, is_root FROM subdomains WHERE project_id = ? AND id IN (${placeholders})`)
+    .all(projectId, ...normalized);
+}
+
+router.get("/:id/export/domain-ip.csv", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rows = db
+    .prepare(`
+      SELECT
+        s.host AS domain,
+        COALESCE(r.value, 'NOT RESOLVED') AS ip
+      FROM subdomains s
+      LEFT JOIN (
+        SELECT DISTINCT subdomain_id, value
+        FROM dns_records
+        WHERE record_type IN ('A', 'AAAA')
+          AND value IS NOT NULL
+          AND TRIM(value) <> ''
+      ) r ON r.subdomain_id = s.id
+      WHERE s.project_id = ?
+      ORDER BY s.host ASC, ip ASC
+    `)
+    .all(id);
+
+  const uniquePairs = new Set();
+  const lines = ["domain;ip"];
+  for (const row of rows) {
+    const domain = String(row.domain || "").trim();
+    const ip = String(row.ip || "").trim();
+    if (!domain || !ip) {
+      continue;
+    }
+    const key = `${domain};${ip}`;
+    if (uniquePairs.has(key)) {
+      continue;
+    }
+    uniquePairs.add(key);
+    lines.push(key);
+  }
+
+  const fileName = `${project.domain}-domain-ip.csv`;
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.send(lines.join("\n"));
+});
+
+router.post("/:id/export/domain-ip-selected.csv", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const requestedIds = Array.isArray(req.body?.subdomainIds) ? req.body.subdomainIds : [];
+  const selectedRows = selectProjectSubdomainsByIds(id, requestedIds);
+  if (!selectedRows.length) {
+    res.status(400).json({ error: "No selected subdomains found" });
+    return;
+  }
+  const selectedIds = selectedRows.map((row) => row.id);
+  const placeholders = selectedIds.map(() => "?").join(",");
+
+  const rows = db
+    .prepare(`
+      SELECT
+        s.host AS domain,
+        COALESCE(r.value, 'NOT RESOLVED') AS ip
+      FROM subdomains s
+      LEFT JOIN (
+        SELECT DISTINCT subdomain_id, value
+        FROM dns_records
+        WHERE record_type IN ('A', 'AAAA')
+          AND value IS NOT NULL
+          AND TRIM(value) <> ''
+      ) r ON r.subdomain_id = s.id
+      WHERE s.project_id = ?
+        AND s.id IN (${placeholders})
+      ORDER BY s.host ASC, ip ASC
+    `)
+    .all(id, ...selectedIds);
+
+  const uniquePairs = new Set();
+  const lines = ["domain;ip"];
+  for (const row of rows) {
+    const domain = String(row.domain || "").trim();
+    const ip = String(row.ip || "").trim();
+    if (!domain || !ip) {
+      continue;
+    }
+    const key = `${domain};${ip}`;
+    if (uniquePairs.has(key)) {
+      continue;
+    }
+    uniquePairs.add(key);
+    lines.push(key);
+  }
+
+  const fileName = `${project.domain}-selected-domain-ip.csv`;
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.send(lines.join("\n"));
+});
+
+router.post("/:id/subdomains", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const host = normalizeHostInput(req.body?.host);
+  if (!host || !isValidDomain(host)) {
+    res.status(400).json({ error: "Invalid host" });
+    return;
+  }
+  const projectDomains = listProjectDomains(project.id).map((item) => item.domain);
+  if (!isHostInProjectScope(host, projectDomains)) {
+    res.status(400).json({ error: formatProjectScopeMessage(projectDomains) });
+    return;
+  }
+
+  const now = nowIso();
+  const row = db
+    .prepare(`
+      INSERT INTO subdomains (id, project_id, host, is_root, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, host)
+      DO UPDATE SET updated_at = excluded.updated_at
+      RETURNING id, host, is_root
+    `)
+    .get(createId(), project.id, host, projectDomains.includes(host) ? 1 : 0, now, now);
+
+  db.prepare(`
+    INSERT OR IGNORE INTO subdomain_sources (id, subdomain_id, source, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(createId(), row.id, "manual", now);
+
+  res.json({ ok: true, subdomainId: row.id, host: row.host, isRoot: Boolean(row.is_root) });
+});
+
+router.delete("/:id/subdomains", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rows = db
+    .prepare(`
+      SELECT id, is_root
+      FROM subdomains
+      WHERE project_id = ?
+    `)
+    .all(id);
+
+  const deletable = rows.filter((row) => !row.is_root).map((row) => row.id);
+  if (!deletable.length) {
+    res.json({ ok: true, deleted: 0 });
+    return;
+  }
+
+  const deleteStmt = db.prepare("DELETE FROM subdomains WHERE id = ?");
+  const tx = db.transaction((ids) => {
+    for (const subdomainId of ids) {
+      deleteStmt.run(subdomainId);
+    }
+  });
+  tx(deletable);
+
+  res.json({ ok: true, deleted: deletable.length });
+});
+
+router.post("/:id/subdomains/delete-selected", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const requestedIds = Array.isArray(req.body?.subdomainIds) ? req.body.subdomainIds : [];
+  const selectedRows = selectProjectSubdomainsByIds(id, requestedIds);
+  if (!selectedRows.length) {
+    res.status(400).json({ error: "No selected subdomains found" });
+    return;
+  }
+
+  const deletable = selectedRows.filter((row) => !row.is_root).map((row) => row.id);
+  if (!deletable.length) {
+    res.json({ ok: true, deleted: 0 });
+    return;
+  }
+
+  const deleteStmt = db.prepare("DELETE FROM subdomains WHERE id = ?");
+  const tx = db.transaction((ids) => {
+    for (const subdomainId of ids) {
+      deleteStmt.run(subdomainId);
+    }
+  });
+  tx(deletable);
+
+  res.json({ ok: true, deleted: deletable.length });
+});
+
+router.put("/:id/subdomains/:subdomainId", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id, subdomainId } = req.params;
+  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const existing = db
+    .prepare(`
+      SELECT id, host, is_root
+      FROM subdomains
+      WHERE id = ? AND project_id = ?
+      LIMIT 1
+    `)
+    .get(subdomainId, id);
+
+  if (!existing) {
+    res.status(404).json({ error: "Subdomain not found" });
+    return;
+  }
+  if (existing.is_root) {
+    res.status(400).json({ error: "Root domain cannot be edited" });
+    return;
+  }
+
+  const host = normalizeHostInput(req.body?.host);
+  if (!host || !isValidDomain(host)) {
+    res.status(400).json({ error: "Invalid host" });
+    return;
+  }
+  const projectDomains = listProjectDomains(project.id).map((item) => item.domain);
+  if (!isHostInProjectScope(host, projectDomains)) {
+    res.status(400).json({ error: formatProjectScopeMessage(projectDomains) });
+    return;
+  }
+  if (projectDomains.includes(host)) {
+    res.status(400).json({ error: "Root domain cannot be set via edit" });
+    return;
+  }
+
+  try {
+    db.prepare(`
+      UPDATE subdomains
+      SET host = ?, updated_at = ?
+      WHERE id = ?
+    `).run(host, nowIso(), subdomainId);
+  } catch (error) {
+    if (String(error?.message || "").includes("UNIQUE constraint failed")) {
+      res.status(409).json({ error: "Subdomain with this host already exists" });
+      return;
+    }
+    throw error;
+  }
+
+  db.prepare(`
+    INSERT OR IGNORE INTO subdomain_sources (id, subdomain_id, source, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(createId(), subdomainId, "manual", nowIso());
+
+  res.json({ ok: true, subdomainId, host });
+});
+
+router.delete("/:id/subdomains/:subdomainId", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id, subdomainId } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const row = db
+    .prepare(`
+      SELECT id, is_root
+      FROM subdomains
+      WHERE id = ? AND project_id = ?
+      LIMIT 1
+    `)
+    .get(subdomainId, id);
+
+  if (!row) {
+    res.status(404).json({ error: "Subdomain not found" });
+    return;
+  }
+  if (row.is_root) {
+    res.status(400).json({ error: "Root domain cannot be deleted" });
+    return;
+  }
+
+  db.prepare("DELETE FROM subdomains WHERE id = ?").run(subdomainId);
+  res.json({ ok: true, subdomainId });
+});
+
+function parsePassiveScanScope(rawScope) {
+  const value = String(rawScope || "core").trim().toLowerCase();
+  if (["core", "extended", "all", "fullypassive", "dorks"].includes(value)) {
+    return value;
+  }
+  if (value.startsWith("provider:")) {
+    const providerId = value.slice("provider:".length).trim().toLowerCase();
+    if (SUPPORTED_PASSIVE_SOURCE_IDS.includes(providerId)) {
+      return `provider:${providerId}`;
+    }
+    return null;
+  }
+  if (value === "fully-passive" || value === "fully_passive") {
+    return "fullypassive";
+  }
+  return null;
+}
+
+function parseDnsScope(rawScope) {
+  const value = String(rawScope || "fast").trim().toLowerCase();
+  if (value === "fast") {
+    return "core";
+  }
+  if (value === "extended") {
+    return "extended";
+  }
+  return null;
+}
+
+function enqueueRun(req, res, type) {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const scanScope =
+    type === "PASSIVE_SCAN"
+      ? parsePassiveScanScope(req.body?.scope)
+      : parseDnsScope(req.body?.scope);
+
+  if (type === "PASSIVE_SCAN" && !scanScope) {
+    res.status(400).json({ error: "Invalid scan scope. Use core, extended, dorks, all, fullypassive, or provider:<id>." });
+    return;
+  }
+  if (type === "DNS_RESOLVE" && !scanScope) {
+    res.status(400).json({ error: "Invalid DNS scope. Use fast or extended." });
+    return;
+  }
+
+  const run = startRun(id, type, { scanScope: scanScope || "core" });
+  enqueueScanJob({ runId: run.id, projectId: id, type, scanScope: run.scanScope });
+
+  res.json({ ok: true, runId: run.id, scanScope: run.scanScope });
+}
+
+router.post("/:id/scan", requireApiUser(), (req, res) => {
+  enqueueRun(req, res, "PASSIVE_SCAN");
+});
+
+router.get("/:id/passive-sources", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  res.json({ sources: SUPPORTED_PASSIVE_SOURCE_IDS });
+});
+
+router.get("/:id/whois", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const refresh = String(req.query?.refresh || "").trim() === "1";
+  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  if (!refresh) {
+    const cached = getCachedWhois(project.id);
+    if (cached) {
+      res.json({ whois: cached, cached: true });
+      return;
+    }
+  }
+
+  try {
+    const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+    const whois = await fetchDomainWhoisLib(primaryDomain);
+    saveCachedWhois(project.id, whois);
+    res.json({ whois, cached: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to fetch WHOIS";
+    res.status(400).json({ error: message });
+  }
+});
+
+router.get("/:id/vt-deep", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const refresh = String(req.query?.refresh || "").trim() === "1";
+  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  if (!refresh) {
+    const cached = getCachedVtDeep(project.id);
+    if (cached) {
+      res.json({ result: cached, cached: true });
+      return;
+    }
+  }
+
+  const settings = new Map(getProviderRuntimeSettings().map((item) => [item.provider, item]));
+  const vt = settings.get("virustotal");
+  if (!vt || !vt.enabled || !vt.token) {
+    res.status(400).json({ error: "VirusTotal provider is disabled or token is missing" });
+    return;
+  }
+
+  try {
+    const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+    const result = await fetchVtDeepForDomain(primaryDomain, vt.token);
+    saveCachedVtDeep(project.id, result);
+    res.json({ result, cached: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load VirusTotal deep data";
+    res.status(400).json({ error: message });
+  }
+});
+
+router.post("/:id/vt-deep-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "VT_DEEP" });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "VT_DEEP",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "VT_DEEP" });
+});
+
+router.post("/:id/whois-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "WHOIS" });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "WHOIS",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "WHOIS" });
+});
+
+router.post("/:id/resolve", requireApiUser(), (req, res) => {
+  enqueueRun(req, res, "DNS_RESOLVE");
+});
+
+router.post("/:id/resolve-selected", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const scanScope = parseDnsScope(req.body?.scope);
+  if (!scanScope) {
+    res.status(400).json({ error: "Invalid DNS scope. Use fast or extended." });
+    return;
+  }
+
+  const rawIds = Array.isArray(req.body?.subdomainIds) ? req.body.subdomainIds : [];
+  const subdomainIds = Array.from(new Set(rawIds.map((item) => String(item || "").trim()).filter(Boolean)));
+  if (!subdomainIds.length) {
+    res.status(400).json({ error: "No subdomains selected" });
+    return;
+  }
+
+  const placeholders = subdomainIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(`SELECT id FROM subdomains WHERE project_id = ? AND id IN (${placeholders})`)
+    .all(id, ...subdomainIds);
+  const validIds = rows.map((row) => row.id);
+  if (!validIds.length) {
+    res.status(400).json({ error: "Selected subdomains are not found in project" });
+    return;
+  }
+
+  const run = startRun(id, "DNS_RESOLVE", {
+    scanScope,
+    taskKind: "DNS_RESOLVE_SELECTED",
+    taskPayload: { subdomainIds: validIds },
+  });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "DNS_RESOLVE",
+    scanScope: run.scanScope,
+    taskKind: "DNS_RESOLVE_SELECTED",
+    taskPayload: { subdomainIds: validIds },
+  });
+  res.json({ ok: true, runId: run.id, selected: validIds.length });
+});
+
+router.post("/:id/runs/:runId/cancel", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id, runId } = req.params;
+
+  const run = db
+    .prepare(`
+      SELECT id, project_id, status, cancel_requested, progress, processed, total
+      FROM scan_runs
+      WHERE id = ? AND project_id = ?
+      LIMIT 1
+    `)
+    .get(runId, id);
+
+  if (!run) {
+    res.status(404).json({ error: "Run not found" });
+    return;
+  }
+
+  if (run.status === "SUCCESS" || run.status === "FAILED") {
+    res.status(409).json({ error: `Run already finished with status ${run.status}` });
+    return;
+  }
+
+  const now = nowIso();
+
+  if (run.status === "QUEUED") {
+    db.prepare("DELETE FROM scan_jobs WHERE run_id = ?").run(runId);
+    db.prepare(`
+      UPDATE scan_runs
+      SET
+        status = 'FAILED',
+        cancel_requested = 1,
+        stage = 'Canceled',
+        error = 'Canceled by user',
+        progress = 100,
+        finished_at = ?
+      WHERE id = ?
+    `).run(now, runId);
+
+    db.prepare(`
+      INSERT INTO scan_run_events (id, run_id, progress, stage, processed, total, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(createId(), runId, 100, "Canceled by user", run.processed || 0, run.total || 0, now);
+
+    res.json({ ok: true, runId, state: "canceled" });
+    return;
+  }
+
+  if (!run.cancel_requested) {
+    db.prepare(`
+      UPDATE scan_runs
+      SET cancel_requested = 1, stage = 'Cancel requested by user'
+      WHERE id = ?
+    `).run(runId);
+
+    db.prepare(`
+      INSERT INTO scan_run_events (id, run_id, progress, stage, processed, total, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      createId(),
+      runId,
+      Number(run.progress) || 0,
+      "Cancel requested by user",
+      Number(run.processed) || 0,
+      Number(run.total) || 0,
+      now,
+    );
+  }
+
+  res.json({ ok: true, runId, state: "cancel_requested" });
+});
+
+router.delete("/:id", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db
+    .prepare("SELECT id FROM projects WHERE id = ? LIMIT 1")
+    .get(id);
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const runIds = db
+    .prepare("SELECT id FROM scan_runs WHERE project_id = ?")
+    .all(id)
+    .map((row) => row.id);
+
+  const queueCleanup = removeScanJobsByRunIds(runIds);
+  db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+
+  res.json({
+    ok: true,
+    deletedProjectId: id,
+    queueCleanup,
+  });
+});
+
+module.exports = { projectsRouter: router };
