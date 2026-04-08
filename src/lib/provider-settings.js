@@ -1,8 +1,58 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const YAML = require("yaml");
 const { getDbState } = require("../db");
 const { encryptToken, decryptToken } = require("./crypto");
+const { parseIntelxKeys } = require("./intelx");
 const { providerCatalog, providerMap } = require("./providers");
 const { createId, nowIso } = require("./utils");
+
+function readEnvFileValue(filePath, key) {
+  const resolvedPath = path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(resolvedPath)) {
+    return "";
+  }
+
+  try {
+    const text = fs.readFileSync(resolvedPath, "utf8");
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = String(line || "").trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match) {
+        continue;
+      }
+      if (match[1] !== key) {
+        continue;
+      }
+      return String(match[2] || "").trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function readEnvProviderToken(providerId) {
+  if (providerId === "intelx") {
+    const raw =
+      process.env.INTELXPROD ||
+      process.env.intelxprod ||
+      process.env.INTELX_API_KEYS ||
+      process.env.INTELX ||
+      process.env.intelx ||
+      readEnvFileValue("../intelxProd/.env", "INTELX_API_KEYS") ||
+      readEnvFileValue("../intelxProd/.env", "INTELXPROD") ||
+      readEnvFileValue("../intelxProd/.env", "intelxprod");
+    return typeof raw === "string" ? raw.trim() : "";
+  }
+
+  return "";
+}
 
 function ensureProviderSettings() {
   const { db } = getDbState();
@@ -22,6 +72,28 @@ function ensureProviderSettings() {
 
     insertStmt.run(createId(), provider.id, provider.description, now, now);
   }
+
+  const rows = db
+    .prepare("SELECT provider, token_encrypted FROM provider_settings")
+    .all();
+  const updateStmt = db.prepare(`
+    UPDATE provider_settings
+    SET token_encrypted = ?, updated_at = ?
+    WHERE provider = ?
+  `);
+
+  for (const row of rows) {
+    if (row.token_encrypted) {
+      continue;
+    }
+
+    const envToken = readEnvProviderToken(row.provider);
+    if (!envToken) {
+      continue;
+    }
+
+    updateStmt.run(encryptToken(envToken), nowIso(), row.provider);
+  }
 }
 
 function listProviderSettings() {
@@ -34,14 +106,80 @@ function listProviderSettings() {
 
   return rows
     .filter((row) => providerMap.has(row.provider))
-    .map((row) => ({
-      provider: row.provider,
-      title: providerMap.get(row.provider)?.title || row.provider,
-      description: row.description,
-      enabled: Boolean(row.enabled),
-      hasToken: Boolean(row.token_encrypted),
-      updatedAt: row.updated_at,
-    }));
+    .map((row) => {
+      let token = "";
+      if (row.token_encrypted) {
+        try {
+          token = decryptToken(row.token_encrypted).trim();
+        } catch {
+          token = "";
+        }
+      }
+
+      return {
+        provider: row.provider,
+        title: providerMap.get(row.provider)?.title || row.provider,
+        description: row.description,
+        enabled: Boolean(row.enabled),
+        hasToken: Boolean(row.token_encrypted),
+        tokenPartsCount: row.provider === "intelx" ? parseIntelxKeys(token).length : (token ? 1 : 0),
+        updatedAt: row.updated_at,
+      };
+    });
+}
+
+function addIntelxKey(rawKey) {
+  const nextKey = String(rawKey || "").trim();
+  if (!nextKey) {
+    throw new Error("IntelX key is required");
+  }
+
+  ensureProviderSettings();
+  const { db } = getDbState();
+  const now = nowIso();
+  const row = db
+    .prepare("SELECT token_encrypted, enabled FROM provider_settings WHERE provider = 'intelx' LIMIT 1")
+    .get();
+
+  const currentToken = row?.token_encrypted ? decryptToken(row.token_encrypted).trim() : "";
+  const keys = parseIntelxKeys(currentToken);
+  if (!keys.includes(nextKey)) {
+    keys.push(nextKey);
+  }
+
+  db.prepare(`
+    UPDATE provider_settings
+    SET token_encrypted = ?, enabled = 1, updated_at = ?
+    WHERE provider = 'intelx'
+  `).run(encryptToken(keys.join(",")), now);
+}
+
+function removeIntelxKey(index) {
+  ensureProviderSettings();
+  const keyIndex = Number.parseInt(String(index), 10);
+  if (!Number.isInteger(keyIndex) || keyIndex < 0) {
+    throw new Error("Invalid IntelX key index");
+  }
+
+  const { db } = getDbState();
+  const now = nowIso();
+  const row = db
+    .prepare("SELECT token_encrypted, enabled FROM provider_settings WHERE provider = 'intelx' LIMIT 1")
+    .get();
+
+  const currentToken = row?.token_encrypted ? decryptToken(row.token_encrypted).trim() : "";
+  const keys = parseIntelxKeys(currentToken);
+  if (keyIndex >= keys.length) {
+    throw new Error("IntelX key index is out of range");
+  }
+
+  keys.splice(keyIndex, 1);
+
+  db.prepare(`
+    UPDATE provider_settings
+    SET token_encrypted = ?, updated_at = ?
+    WHERE provider = 'intelx'
+  `).run(keys.length ? encryptToken(keys.join(",")) : null, now);
 }
 
 function updateProviderSetting(input) {
@@ -153,8 +291,10 @@ function getProviderRuntimeSettings() {
 }
 
 module.exports = {
+  addIntelxKey,
   ensureProviderSettings,
   listProviderSettings,
+  removeIntelxKey,
   updateProviderSetting,
   buildProviderConfigYaml,
   getProviderRuntimeSettings,

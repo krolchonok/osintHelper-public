@@ -263,6 +263,19 @@
     return [];
   }
 
+  function getProjectDisplayName(project) {
+    return String(
+      (project && (project.name || project.primaryDomain || project.domain || project.id)) || "Проект",
+    );
+  }
+
+  function getProjectFileStem(project) {
+    return getProjectDisplayName(project)
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "project";
+  }
+
   function buildWhoisText(whois) {
     if (!whois) {
       return "";
@@ -285,6 +298,66 @@
       `Кэшировано: ${whois.cachedAt || "-"}`,
     ];
     return lines.join("\n");
+  }
+
+  function formatProviderCheckMessage(providerId, result) {
+    const summary = result && result.summary ? String(result.summary) : "Проверка завершена";
+    const limit =
+      result && Object.prototype.hasOwnProperty.call(result, "limit") && result.limit !== null
+        ? `лимит=${result.limit}`
+        : "лимит=?";
+    const remaining =
+      result && Object.prototype.hasOwnProperty.call(result, "remaining") && result.remaining !== null
+        ? `остаток=${result.remaining}`
+        : "остаток=?";
+
+    return `${summary} (${limit}, ${remaining})`;
+  }
+
+  function buildIntelxQuotaMarkup(result) {
+    const accounts = Array.isArray(result && result.details) ? result.details : [];
+    if (!accounts.length) {
+      return "";
+    }
+
+    const totalAvailable = Number(result && result.remaining) || 0;
+    const totalMax = Number(result && result.limit) || 0;
+    const totalPercent = totalMax > 0
+      ? Math.max(0, Math.min(100, Math.round((totalAvailable / totalMax) * 100)))
+      : 0;
+
+    const rows = accounts
+      .map((item, index) => {
+        const available = Number(item && item.available) || 0;
+        const creditMax = Number(item && item.creditMax) || 0;
+        const percent = creditMax > 0
+          ? Math.max(0, Math.min(100, Math.round((available / creditMax) * 100)))
+          : 0;
+
+        return `
+          <div class="intelx-quota-card">
+            <div class="progress-meta">
+              <span>Key ${index + 1}</span>
+              <span>${available}/${creditMax || "?"}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill intelx-progress-fill" style="width:${percent}%"></div></div>
+          </div>
+        `;
+      })
+      .join("");
+
+    return `
+      <div class="intelx-quota-grid">
+        <div class="intelx-quota-card intelx-quota-card-total">
+          <div class="progress-meta">
+            <span>Общий остаток</span>
+            <span>${totalAvailable}/${totalMax || "?"}</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill intelx-progress-fill" style="width:${totalPercent}%"></div></div>
+        </div>
+        ${rows}
+      </div>
+    `;
   }
 
   function setPageCleanup(cleanup) {
@@ -655,10 +728,13 @@
         const reviewMinutes = Math.max(1, Math.ceil(subdomainsCount / 220));
         const createdAt = formatDate(project.createdAt);
         const domains = formatProjectDomains(project);
-        const lead = `Покрытие для ${project.domain}: пассивные источники, DNS-резолв и история запусков.`;
+        const projectName = getProjectDisplayName(project);
+        const lead = domains.length
+          ? `Покрытие для ${projectName}: пассивные источники, DNS-резолв и история запусков.`
+          : `Проект ${projectName} готов к наполнению доменами, сканами и сохранёнными результатами.`;
         const domainsMeta = domains.length > 1
           ? `${domains.length} домена: ${domains.join(", ")}`
-          : `${domains[0] || project.domain}`;
+          : `${domains[0] || "Домен пока не добавлен"}`;
 
         return `
           <a class="project-card" href="/projects/${encodeURIComponent(project.id)}" data-link style="--card-stagger:${40 + ((index % 8) * 40)}ms">
@@ -667,7 +743,7 @@
                 <span>${escapeHtml(createdAt)}</span>
                 <span class="pill tiny">${status}</span>
               </div>
-              <div class="project-title mono">${escapeHtml(project.domain)}</div>
+              <div class="project-title mono">${escapeHtml(projectName)}</div>
               <div class="project-lead">${escapeHtml(lead)}</div>
               <div class="hint mono">${escapeHtml(domainsMeta)}</div>
               <div class="project-insight">
@@ -703,19 +779,19 @@
       <div class="stack-xl">
         <section class="hero panel">
           <h1>Passive Recon Management</h1>
-          <p>Создавайте проект на домен, запускайте пассивный скан и DNS-резолв, отслеживайте прогресс и историю.</p>
+          <p>Создавайте проект по названию, добавляйте домены внутри и запускайте сканы с сохранением результатов.</p>
         </section>
 
         <section class="panel">
           <div class="panel-header">
-            <h2>Добавить проекты</h2>
-            <p>Форматы ввода: запятая, точка с запятой, новая строка</p>
+            <h2>Новый проект</h2>
+            <p>Домен можно добавить позже уже внутри проекта.</p>
           </div>
-          <form id="bulk-project-form">
-            <div id="bulk-project-message"></div>
-            <textarea id="bulk-project-input" class="text-input" rows="4" placeholder="example.com\nexample.org"></textarea>
+          <form id="project-create-form">
+            <div id="project-create-message"></div>
+            <input id="project-create-input" class="text-input" type="text" placeholder="Название проекта" />
             <div class="row">
-              <button class="btn btn-primary" id="bulk-project-submit" type="submit">Сохранить домены</button>
+              <button class="btn btn-primary" id="project-create-submit" type="submit">Создать проект</button>
             </div>
           </form>
         </section>
@@ -736,9 +812,12 @@
     function applyProjectsFilter() {
       const searchNeedle = String(state.projectSearch || "").trim().toLowerCase();
       const projects = searchNeedle
-        ? allProjects.filter((project) =>
-            formatProjectDomains(project).some((domain) => String(domain || "").toLowerCase().includes(searchNeedle)),
-          )
+        ? allProjects.filter((project) => {
+            const domainsMatch = formatProjectDomains(project)
+              .some((domain) => String(domain || "").toLowerCase().includes(searchNeedle));
+            const nameMatch = getProjectDisplayName(project).toLowerCase().includes(searchNeedle);
+            return domainsMatch || nameMatch;
+          })
         : allProjects;
 
       if (projectsCountEl) {
@@ -752,25 +831,30 @@
     state.projectsFilterRenderer = applyProjectsFilter;
     applyProjectsFilter();
 
-    const form = document.getElementById("bulk-project-form");
-    const submit = document.getElementById("bulk-project-submit");
-    const messageEl = document.getElementById("bulk-project-message");
+    const form = document.getElementById("project-create-form");
+    const submit = document.getElementById("project-create-submit");
+    const messageEl = document.getElementById("project-create-message");
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const input = document.getElementById("bulk-project-input").value;
+      const name = document.getElementById("project-create-input").value.trim();
+
+      if (!name) {
+        messageEl.innerHTML = renderErrorBanner("Название проекта обязательно");
+        return;
+      }
 
       submit.disabled = true;
       messageEl.innerHTML = "";
 
       try {
-        const result = await api("/api/projects/bulk", {
+        const result = await api("/api/projects", {
           method: "POST",
-          body: { input },
+          body: { name },
         });
 
         messageEl.innerHTML = renderSuccessBanner(
-          `Сохранено: создано ${result.created}, уже было ${result.existed}`,
+          `Проект "${getProjectDisplayName(result.project)}" создан`,
         );
 
         await renderProjectsPage();
@@ -802,11 +886,16 @@
             ? "WHOIS"
             : run.taskKind === "VT_DEEP"
               ? "VT_DEEP"
+              : run.taskKind === "INTELX_LEAKS"
+                ? "INTELX_LEAKS"
               : run.taskKind === "DNS_RESOLVE_SELECTED"
                 ? "DNS_RESOLVE_SELECTED"
               : run.type;
         const scopeLabel =
-          run.taskKind === "WHOIS" || run.taskKind === "VT_DEEP" || run.taskKind === "DNS_RESOLVE_SELECTED"
+          run.taskKind === "WHOIS" ||
+          run.taskKind === "VT_DEEP" ||
+          run.taskKind === "INTELX_LEAKS" ||
+          run.taskKind === "DNS_RESOLVE_SELECTED"
             ? "-"
             : run.type === "DNS_RESOLVE"
             ? (run.scanScope === "core" ? "fast" : "extended")
@@ -893,6 +982,9 @@
     }
     if (run.taskKind === "VT_DEEP") {
       return "VT_DEEP";
+    }
+    if (run.taskKind === "INTELX_LEAKS") {
+      return "INTELX_LEAKS";
     }
     if (run.taskKind === "DNS_RESOLVE_SELECTED") {
       return "DNS_RESOLVE_SELECTED";
@@ -1121,6 +1213,79 @@
     `;
   }
 
+  function buildIntelxTable(intelxData) {
+    if (!intelxData) {
+      return '<p class="hint">Данные IntelX еще не загружены. Запустите задачу IntelX, чтобы сохранить результаты в проект.</p>';
+    }
+
+    const searches = Array.isArray(intelxData.searches) ? intelxData.searches : [];
+    if (!searches.length) {
+      return '<p class="hint">Поиск IntelX еще не запускался.</p>';
+    }
+
+    const sections = searches
+      .map((entry) => {
+        const hits = Array.isArray(entry.hits) ? entry.hits : [];
+        const rows = hits.length
+          ? hits
+              .map(
+                (hit) => `
+                  <tr>
+                    <td class="mono">${escapeHtml(entry.term || "-")}</td>
+                    <td class="mono">${escapeHtml(hit.line || "-")}</td>
+                  </tr>
+                `,
+              )
+              .join("")
+          : `
+            <tr>
+              <td class="mono">${escapeHtml(entry.term || "-")}</td>
+              <td>Совпадений не найдено</td>
+            </tr>
+          `;
+
+        return `
+          <div class="stack-md">
+            <div class="row wrap">
+              <span class="pill mono">${escapeHtml(entry.term || "-")}</span>
+              <span class="hint">${Number(entry.count) || 0} совпадений</span>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Терм</th>
+                    <th>Совпадение</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    const summary = intelxData.summary || {};
+    const meta = [
+      intelxData.querySource === "custom" && intelxData.customQuery
+        ? `Кастомный запрос: ${intelxData.customQuery}`
+        : "",
+      `Поисков: ${Number(summary.searches) || searches.length}`,
+      `Совпадений: ${Number(summary.hits) || 0}`,
+      intelxData.cachedAt ? `Кэшировано: ${formatDate(intelxData.cachedAt)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    return `
+      <div class="stack-lg">
+        <div class="hint">${escapeHtml(meta || "Результаты IntelX")}</div>
+        ${sections}
+      </div>
+    `;
+  }
+
   async function renderProjectPage(projectId) {
     let payload;
     let passiveSourcePayload = null;
@@ -1152,6 +1317,7 @@
     let runs = Array.isArray(project.runs) ? project.runs : [];
     let subdomains = [];
     let vtDeepData = null;
+    let intelxData = null;
     let activeDataTab = "subdomains";
     const selectedSubdomainIds = new Set();
     let selectedRunId = runs[0] ? runs[0].id : null;
@@ -1184,19 +1350,25 @@
     const projectDomainsMarkup = projectDomains
       .map((domain) => `<span class="pill mono">${escapeHtml(domain)}</span>`)
       .join("");
+    const projectName = getProjectDisplayName(project);
+    const primaryDomain = project.primaryDomain || project.domain || "";
+    const initialIntelxCustomQuery =
+      project.intelx && project.intelx.querySource === "custom" && project.intelx.customQuery
+        ? String(project.intelx.customQuery)
+        : "";
 
     appEl.innerHTML = `
       <div id="project-page-root">
         <div class="project-column project-column-left">
           <section class="panel hero">
-            <h1>${escapeHtml(project.domain)}</h1>
+            <h1>${escapeHtml(projectName)}</h1>
             <p>
               Поддомены: ${Number(project.counts && project.counts.subdomains) || 0}
               · DNS-записи: ${Number(project.counts && project.counts.dnsRecords) || 0}
               · Запуски: ${Number(project.counts && project.counts.runs) || 0}
             </p>
             <div class="row wrap">
-              ${projectDomainsMarkup}
+              ${projectDomainsMarkup || '<span class="hint">Домены пока не добавлены.</span>'}
             </div>
             <form id="project-domain-form">
               <div class="row wrap">
@@ -1242,6 +1414,7 @@
               <div class="action-group">
                 <div class="action-group-title">DNS и WHOIS</div>
                 <button class="btn btn-ghost" id="run-whois-btn">WHOIS (корневой домен)</button>
+                <button class="btn btn-secondary" id="run-intelx-btn">Поиск утечек IntelX</button>
                 <button class="btn btn-secondary" id="run-resolve-fast-btn">DNS-резолв (быстрый)</button>
                 <button class="btn btn-ghost" id="run-resolve-extended-btn">DNS-резолв (расширенный)</button>
               </div>
@@ -1261,33 +1434,19 @@
         <div class="project-column project-column-right">
           <section class="panel">
             <div class="panel-header">
-              <h2>Последние запуски</h2>
-              <p id="runs-status-text">Автообновление каждые 3 с</p>
-            </div>
-            <div id="runs-table-root"></div>
-            <div class="run-log" id="runs-log-root"></div>
-            <div class="whois-block">
-              <div class="panel-header">
-                <h3>WHOIS</h3>
-                <p>Снимок корневого домена</p>
-              </div>
-              <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
               <h2>Данные</h2>
               <p id="subdomains-status-text">Автообновление каждые 3 с при активных запусках.</p>
             </div>
             <div class="row wrap">
               <button class="btn btn-primary" id="tab-subdomains-btn" type="button">Поддомены</button>
+              <button class="btn btn-ghost" id="tab-whois-btn" type="button">WHOIS</button>
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
+              <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
             </div>
             <div id="subdomains-panel">
             <form id="subdomain-create-form">
               <div class="row wrap">
-                <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="new.${escapeHtml(project.domain)}" />
+                <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
                 <button class="btn btn-primary" id="subdomain-create-btn" type="submit">Добавить поддомен</button>
                 <button class="btn btn-secondary" id="resolve-selected-btn" type="button">Резолв выбранных (быстрый)</button>
                 <button class="btn btn-danger" id="delete-selected-btn" type="button">Удалить выбранные</button>
@@ -1298,6 +1457,15 @@
             <div id="subdomain-action-message"></div>
             <div id="subdomains-table-root"></div>
             </div>
+            <div id="whois-panel" style="display:none">
+              <div class="whois-block">
+                <div class="panel-header">
+                  <h3>WHOIS</h3>
+                  <p>Снимок корневого домена</p>
+                </div>
+                <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
+              </div>
+            </div>
             <div id="vtdeep-panel" style="display:none">
               <div class="row wrap">
                 <button class="btn btn-secondary" id="vtdeep-load-btn" type="button">Загрузить данные VT Deep</button>
@@ -1305,6 +1473,29 @@
               <div id="vtdeep-action-message"></div>
               <div id="vtdeep-table-root"></div>
             </div>
+            <div id="intelx-panel" style="display:none">
+              <div class="stack-md">
+                <div class="field">
+                  <label for="intelx-custom-query">Кастомный запрос IntelX</label>
+                  <textarea id="intelx-custom-query" class="text-input mono" rows="3" placeholder="Например: &quot;site:example.com&quot; или произвольный IntelX запрос">${escapeHtml(initialIntelxCustomQuery)}</textarea>
+                  <div class="hint">Если поле пустое, IntelX будет искать по доменам проекта.</div>
+                </div>
+                <div class="row wrap">
+                  <button class="btn btn-secondary" id="intelx-load-btn" type="button">Запустить IntelX</button>
+                </div>
+              </div>
+              <div id="intelx-action-message"></div>
+              <div id="intelx-table-root"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Последние запуски</h2>
+              <p id="runs-status-text">Автообновление каждые 3 с</p>
+            </div>
+            <div id="runs-table-root"></div>
+            <div class="run-log" id="runs-log-root"></div>
           </section>
         </div>
       </div>
@@ -1317,6 +1508,7 @@
     const passiveScopeInfoBtn = document.getElementById("passive-scope-info-btn");
     const passiveScopeInfo = document.getElementById("passive-scope-info");
     const runWhoisBtn = document.getElementById("run-whois-btn");
+    const runIntelxBtn = document.getElementById("run-intelx-btn");
     const runResolveFastBtn = document.getElementById("run-resolve-fast-btn");
     const runResolveExtendedBtn = document.getElementById("run-resolve-extended-btn");
     const exportDomainIpCsvBtn = document.getElementById("export-domain-ip-csv-btn");
@@ -1332,9 +1524,13 @@
     const subdomainsTableRoot = document.getElementById("subdomains-table-root");
     const subdomainsStatusText = document.getElementById("subdomains-status-text");
     const tabSubdomainsBtn = document.getElementById("tab-subdomains-btn");
+    const tabWhoisBtn = document.getElementById("tab-whois-btn");
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
+    const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
+    const whoisPanel = document.getElementById("whois-panel");
     const vtDeepPanel = document.getElementById("vtdeep-panel");
+    const intelxPanel = document.getElementById("intelx-panel");
     const subdomainCreateForm = document.getElementById("subdomain-create-form");
     const subdomainCreateHostInput = document.getElementById("subdomain-create-host");
     const subdomainCreateBtn = document.getElementById("subdomain-create-btn");
@@ -1346,6 +1542,10 @@
     const vtDeepLoadBtn = document.getElementById("vtdeep-load-btn");
     const vtDeepActionMessageEl = document.getElementById("vtdeep-action-message");
     const vtDeepTableRoot = document.getElementById("vtdeep-table-root");
+    const intelxLoadBtn = document.getElementById("intelx-load-btn");
+    const intelxCustomQueryInput = document.getElementById("intelx-custom-query");
+    const intelxActionMessageEl = document.getElementById("intelx-action-message");
+    const intelxTableRoot = document.getElementById("intelx-table-root");
 
     function autosizeWhoisField() {
       whoisInfoField.style.height = "auto";
@@ -1415,12 +1615,28 @@
         kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
     }
 
+    function setIntelxMessage(message, kind) {
+      if (!message) {
+        intelxActionMessageEl.innerHTML = "";
+        return;
+      }
+      intelxActionMessageEl.innerHTML =
+        kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
+    }
+
     function renderDataTab() {
       const showSubdomains = activeDataTab === "subdomains";
+      const showWhois = activeDataTab === "whois";
+      const showVtDeep = activeDataTab === "vtdeep";
+      const showIntelx = activeDataTab === "intelx";
       subdomainsPanel.style.display = showSubdomains ? "" : "none";
-      vtDeepPanel.style.display = showSubdomains ? "none" : "";
+      whoisPanel.style.display = showWhois ? "" : "none";
+      vtDeepPanel.style.display = showVtDeep ? "" : "none";
+      intelxPanel.style.display = showIntelx ? "" : "none";
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
-      tabVtDeepBtn.className = showSubdomains ? "btn btn-ghost" : "btn btn-primary";
+      tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
+      tabVtDeepBtn.className = showVtDeep ? "btn btn-primary" : "btn btn-ghost";
+      tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
     }
 
     function createRunsSignature(list) {
@@ -1747,6 +1963,17 @@
       vtDeepTableRoot.innerHTML = buildVtDeepTable(vtDeepData);
       if (vtDeepData && Array.isArray(vtDeepData.warnings) && vtDeepData.warnings.length) {
         setVtDeepMessage(`Предупреждения: ${vtDeepData.warnings.join("; ")}`, "error");
+      } else {
+        setVtDeepMessage("", "");
+      }
+    }
+
+    function renderIntelx() {
+      intelxTableRoot.innerHTML = buildIntelxTable(intelxData);
+      if (intelxData && Array.isArray(intelxData.warnings) && intelxData.warnings.length) {
+        setIntelxMessage(`Предупреждения: ${intelxData.warnings.join("; ")}`, "error");
+      } else {
+        setIntelxMessage("", "");
       }
     }
 
@@ -1828,6 +2055,19 @@
       }
     }
 
+    async function refreshIntelxInfo() {
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/intelx-leaks`);
+        if (disposed) {
+          return;
+        }
+        intelxData = payload && payload.result ? payload.result : null;
+        renderIntelx();
+      } catch (error) {
+        setIntelxMessage(friendlyError(error, "Не удалось загрузить данные IntelX"), "error");
+      }
+    }
+
     async function refreshRuns() {
       if (disposed) {
         return;
@@ -1874,6 +2114,9 @@
         if (runs.some((run) => run.taskKind === "VT_DEEP" && run.status === "SUCCESS")) {
           await refreshVtDeepInfo();
         }
+        if (runs.some((run) => run.taskKind === "INTELX_LEAKS" && run.status === "SUCCESS")) {
+          await refreshIntelxInfo();
+        }
         const hasActiveRuns = runs.some((run) => ACTIVE_STATUSES.has(run.status));
         const shouldRefreshSubdomains = hasActiveRuns || hadActiveRuns;
         hadActiveRuns = hasActiveRuns;
@@ -1891,6 +2134,7 @@
       runPassiveProviderSelect.disabled = disabled || !passiveSources.length;
       runPassiveProviderBtn.disabled = disabled || !passiveSources.length;
       runWhoisBtn.disabled = disabled;
+      runIntelxBtn.disabled = disabled;
       runResolveFastBtn.disabled = disabled;
       runResolveExtendedBtn.disabled = disabled;
       exportDomainIpCsvBtn.disabled = disabled;
@@ -1898,6 +2142,7 @@
       projectDomainInput.disabled = disabled;
       projectDomainSubmit.disabled = disabled;
       vtDeepLoadBtn.disabled = disabled;
+      intelxLoadBtn.disabled = disabled;
       resolveSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       deleteSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       exportSelectedCsvBtn.disabled = disabled || selectedSubdomainIds.size === 0;
@@ -1909,13 +2154,18 @@
 
       try {
         await api(endpoint, { method: "POST", body });
-        setActionMessage(successMessage, "success");
+        showPopup(successMessage, "success");
         await refreshRuns();
       } catch (error) {
         setActionMessage(friendlyError(error, "Не удалось выполнить действие"), "error");
       } finally {
         setActionButtonsDisabled(false);
       }
+    }
+
+    function buildIntelxTaskBody() {
+      const customQuery = intelxCustomQueryInput ? intelxCustomQueryInput.value.trim() : "";
+      return customQuery ? { customQuery } : {};
     }
 
     runPassiveCoreBtn.addEventListener("click", () => {
@@ -1956,9 +2206,24 @@
       );
     });
 
+    runIntelxBtn.addEventListener("click", () => {
+      const body = buildIntelxTaskBody();
+      void queueAction(
+        `/api/projects/${encodeURIComponent(projectId)}/intelx-task`,
+        body.customQuery ? "Задача IntelX с кастомным запросом поставлена в очередь" : "Задача IntelX поставлена в очередь",
+        body,
+      );
+    });
+
     tabSubdomainsBtn.addEventListener("click", () => {
       activeDataTab = "subdomains";
       renderDataTab();
+    });
+
+    tabWhoisBtn.addEventListener("click", () => {
+      activeDataTab = "whois";
+      renderDataTab();
+      void refreshWhoisInfo();
     });
 
     tabVtDeepBtn.addEventListener("click", () => {
@@ -1969,11 +2234,28 @@
       }
     });
 
+    tabIntelxBtn.addEventListener("click", () => {
+      activeDataTab = "intelx";
+      renderDataTab();
+      if (!intelxData) {
+        void refreshIntelxInfo();
+      }
+    });
+
     vtDeepLoadBtn.addEventListener("click", () => {
       void queueAction(
         `/api/projects/${encodeURIComponent(projectId)}/vt-deep-task`,
         "Задача VT Deep поставлена в очередь",
         {},
+      );
+    });
+
+    intelxLoadBtn.addEventListener("click", () => {
+      const body = buildIntelxTaskBody();
+      void queueAction(
+        `/api/projects/${encodeURIComponent(projectId)}/intelx-task`,
+        body.customQuery ? "Задача IntelX с кастомным запросом поставлена в очередь" : "Задача IntelX поставлена в очередь",
+        body,
       );
     });
 
@@ -2018,7 +2300,7 @@
         const blob = await response.blob();
         const disposition = response.headers.get("content-disposition") || "";
         const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
-        const fileName = fileNameMatch ? fileNameMatch[1] : `${project.domain}-domain-ip.csv`;
+        const fileName = fileNameMatch ? fileNameMatch[1] : `${getProjectFileStem(project)}-domain-ip.csv`;
         const url = window.URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -2219,7 +2501,7 @@
         const blob = await response.blob();
         const disposition = response.headers.get("content-disposition") || "";
         const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
-        const fileName = fileNameMatch ? fileNameMatch[1] : `${project.domain}-selected-domain-ip.csv`;
+        const fileName = fileNameMatch ? fileNameMatch[1] : `${getProjectFileStem(project)}-selected-domain-ip.csv`;
         const url = window.URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -2242,6 +2524,7 @@
     renderRuns(true);
     renderSubdomains();
     renderVtDeep();
+    renderIntelx();
     renderDataTab();
     void refreshSubdomains(true).catch((error) => {
       if (disposed) {
@@ -2307,8 +2590,23 @@
 
     const rows = providers
       .map(
-        (provider) => `
-          <tr class="provider-row" data-provider="${escapeHtml(provider.provider)}">
+        (provider) => {
+          const tokenMeta = provider.hasToken
+            ? (provider.provider === "intelx"
+              ? `Да${provider.tokenPartsCount > 1 ? ` (${provider.tokenPartsCount} ключей)` : ""}`
+              : "Да")
+            : "Нет";
+          const intelxKeyItems = provider.provider === "intelx"
+            ? Array.from({ length: Number(provider.tokenPartsCount) || 0 }, (_item, index) => `
+              <div class="intelx-key-item">
+                <span class="mono">Key ${index + 1}</span>
+                <button class="btn btn-ghost intelx-key-remove" data-key-index="${index}" type="button">Убрать</button>
+              </div>
+            `).join("")
+            : "";
+
+          return `
+          <tr class="provider-row ${provider.provider === "intelx" ? "provider-row-intelx" : ""}" data-provider="${escapeHtml(provider.provider)}">
             <td>
               <div><strong>${escapeHtml(provider.title || provider.provider)}</strong></div>
               <div class="hint mono">${escapeHtml(provider.provider)}</div>
@@ -2320,21 +2618,73 @@
                 Включен
               </label>
             </td>
-            <td>${provider.hasToken ? "Да" : "Нет"}</td>
             <td>
-              <input class="text-input provider-token" type="text" placeholder="Новый токен (необязательно)" />
+              <div>${escapeHtml(tokenMeta)}</div>
             </td>
             <td>
-              <div class="row wrap" style="margin-top:0">
-                <button class="btn btn-primary provider-save" type="button">Сохранить</button>
-                <button class="btn btn-ghost provider-clear" type="button">Очистить токен</button>
-                <button class="btn btn-ghost provider-check-limit" type="button">Проверить лимит</button>
-              </div>
-              <div class="hint">Обновлено: ${escapeHtml(formatDate(provider.updatedAt))}</div>
-              <div class="hint provider-row-message"></div>
+              ${provider.provider === "intelx"
+                ? `
+                  <div class="intelx-stack">
+                    <section class="intelx-block">
+                      <div class="intelx-block-head">
+                        <strong>Ключи</strong>
+                        <span class="hint">${Number(provider.tokenPartsCount) || 0}</span>
+                      </div>
+                      <div class="intelx-key-list">
+                        ${intelxKeyItems || '<div class="hint">Ключи пока не добавлены.</div>'}
+                      </div>
+                    </section>
+                    <section class="intelx-block intelx-block-add">
+                      <div class="intelx-block-head">
+                        <strong>Добавить ключ</strong>
+                      </div>
+                      <div class="row wrap intelx-key-input-row">
+                        <input class="text-input intelx-key-input" type="password" placeholder="Новый IntelX key" />
+                        <button class="btn btn-secondary intelx-key-add" type="button">Добавить</button>
+                      </div>
+                    </section>
+                  </div>
+                `
+                : `<input class="text-input provider-token" type="text" placeholder="Новый токен (необязательно)" />`}
+            </td>
+            <td>
+              ${provider.provider === "intelx"
+                ? `
+                  <div class="intelx-stack">
+                    <section class="intelx-block intelx-block-actions">
+                      <div class="intelx-block-head">
+                        <strong>Действия</strong>
+                      </div>
+                      <div class="row wrap intelx-actions-row" style="margin-top:0">
+                        <button class="btn btn-primary provider-save" type="button">Сохранить</button>
+                        <button class="btn btn-ghost provider-clear" type="button">Очистить</button>
+                        <button class="btn btn-ghost provider-check-limit" type="button">Проверить токены</button>
+                      </div>
+                      <div class="hint">Обновлено: ${escapeHtml(formatDate(provider.updatedAt))}</div>
+                      <div class="hint provider-row-message"></div>
+                    </section>
+                    <section class="intelx-block intelx-block-usage">
+                      <div class="intelx-block-head">
+                        <strong>Квоты</strong>
+                      </div>
+                      <div class="provider-row-progress"></div>
+                    </section>
+                  </div>
+                `
+                : `
+                  <div class="row wrap" style="margin-top:0">
+                    <button class="btn btn-primary provider-save" type="button">Сохранить</button>
+                    <button class="btn btn-ghost provider-clear" type="button">Очистить токен</button>
+                    <button class="btn btn-ghost provider-check-limit" type="button">Проверить лимит</button>
+                  </div>
+                  <div class="hint">Обновлено: ${escapeHtml(formatDate(provider.updatedAt))}</div>
+                  <div class="provider-row-progress"></div>
+                  <div class="hint provider-row-message"></div>
+                `}
             </td>
           </tr>
-        `,
+        `;
+        },
       )
       .join("");
 
@@ -2375,9 +2725,13 @@
       const provider = row.getAttribute("data-provider");
       const enabledInput = row.querySelector(".provider-enabled");
       const tokenInput = row.querySelector(".provider-token");
+      const intelxKeyInput = row.querySelector(".intelx-key-input");
+      const intelxKeyAddButton = row.querySelector(".intelx-key-add");
+      const intelxKeyRemoveButtons = row.querySelectorAll(".intelx-key-remove");
       const saveButton = row.querySelector(".provider-save");
       const clearButton = row.querySelector(".provider-clear");
       const checkLimitButton = row.querySelector(".provider-check-limit");
+      const rowProgress = row.querySelector(".provider-row-progress");
       const rowMessage = row.querySelector(".provider-row-message");
 
       function setRowMessage(message, kind) {
@@ -2390,11 +2744,31 @@
         rowMessage.style.color = kind === "error" ? "#8a1919" : "#115e59";
       }
 
+      function setRowProgress(markup = "") {
+        if (rowProgress) {
+          rowProgress.innerHTML = markup;
+        }
+      }
+
+      function setRowBusy(disabled) {
+        saveButton.disabled = disabled;
+        clearButton.disabled = disabled;
+        checkLimitButton.disabled = disabled;
+        if (intelxKeyInput) {
+          intelxKeyInput.disabled = disabled;
+        }
+        if (intelxKeyAddButton) {
+          intelxKeyAddButton.disabled = disabled;
+        }
+        intelxKeyRemoveButtons.forEach((button) => {
+          button.disabled = disabled;
+        });
+      }
+
       async function save(clearToken) {
-        saveButton.disabled = true;
-        clearButton.disabled = true;
-        checkLimitButton.disabled = true;
+        setRowBusy(true);
         setRowMessage("", "");
+        setRowProgress("");
 
         try {
           const body = {
@@ -2422,9 +2796,7 @@
         } catch (error) {
           setRowMessage(friendlyError(error, "Не удалось сохранить"), "error");
         } finally {
-          saveButton.disabled = false;
-          clearButton.disabled = false;
-          checkLimitButton.disabled = false;
+          setRowBusy(false);
         }
       }
 
@@ -2436,11 +2808,58 @@
         void save(true);
       });
 
+      if (intelxKeyAddButton && intelxKeyInput) {
+        intelxKeyAddButton.addEventListener("click", async () => {
+          const key = intelxKeyInput.value.trim();
+          if (!key) {
+            setRowMessage("Введите IntelX key", "error");
+            return;
+          }
+
+          setRowBusy(true);
+          setRowMessage("", "");
+          try {
+            await api("/api/settings/providers/intelx/keys", {
+              method: "POST",
+              body: { key },
+            });
+            setRowMessage("IntelX key добавлен", "success");
+            await renderProvidersPage();
+          } catch (error) {
+            setRowMessage(friendlyError(error, "Не удалось добавить IntelX key"), "error");
+          } finally {
+            setRowBusy(false);
+          }
+        });
+      }
+
+      intelxKeyRemoveButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+          const keyIndex = button.getAttribute("data-key-index");
+          if (keyIndex === null) {
+            return;
+          }
+
+          setRowBusy(true);
+          setRowMessage("", "");
+          try {
+            await api(`/api/settings/providers/intelx/keys/${encodeURIComponent(keyIndex)}`, {
+              method: "DELETE",
+            });
+            setRowMessage("IntelX key удален", "success");
+            await renderProvidersPage();
+          } catch (error) {
+            setRowMessage(friendlyError(error, "Не удалось удалить IntelX key"), "error");
+          } finally {
+            setRowBusy(false);
+          }
+        });
+      });
+
       checkLimitButton.addEventListener("click", async () => {
-        saveButton.disabled = true;
-        clearButton.disabled = true;
-        checkLimitButton.disabled = true;
+        setRowBusy(true);
         setRowMessage("Проверка...", "success");
+        setRowProgress("");
 
         try {
           const payload = await api("/api/settings/providers/check-limit", {
@@ -2448,22 +2867,16 @@
             body: { provider },
           });
           const result = payload && payload.result ? payload.result : null;
-          const limit =
-            result && Object.prototype.hasOwnProperty.call(result, "limit") && result.limit !== null
-              ? `лимит=${result.limit}`
-              : "лимит=?";
-          const remaining =
-            result && Object.prototype.hasOwnProperty.call(result, "remaining") && result.remaining !== null
-              ? `остаток=${result.remaining}`
-              : "остаток=?";
-          const summary = result && result.summary ? String(result.summary) : "Проверка завершена";
-          setRowMessage(`${summary} (${limit}, ${remaining})`, "success");
+          if (provider === "intelx") {
+            setRowMessage("Проверка IntelX завершена", "success");
+            setRowProgress(buildIntelxQuotaMarkup(result));
+          } else {
+            setRowMessage(formatProviderCheckMessage(provider, result), "success");
+          }
         } catch (error) {
           setRowMessage(friendlyError(error, "Не удалось проверить лимит"), "error");
         } finally {
-          saveButton.disabled = false;
-          clearButton.disabled = false;
-          checkLimitButton.disabled = false;
+          setRowBusy(false);
         }
       });
     });

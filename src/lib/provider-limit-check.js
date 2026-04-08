@@ -1,4 +1,5 @@
 const CHECK_TIMEOUT_MS = 15000;
+const { fetchIntelxAccountInfo } = require("./intelx");
 
 function parseTwoPartToken(rawToken) {
   const raw = String(rawToken || "").trim();
@@ -226,6 +227,19 @@ async function checkProviderLimit(provider, token) {
       limit: rates.limit,
       remaining: rates.remaining,
       details: quotas || attrs || null,
+    };
+  }
+
+  if (providerId === "intelx") {
+    const accounts = await fetchIntelxAccountInfo(rawToken);
+    const totalAvailable = accounts.reduce((sum, item) => sum + Number(item.available || 0), 0);
+    const totalMax = accounts.reduce((sum, item) => sum + Number(item.creditMax || 0), 0);
+    return {
+      provider: providerId,
+      summary: `keys=${accounts.length}, available=${totalAvailable}, max=${totalMax}`,
+      limit: totalMax || null,
+      remaining: totalAvailable,
+      details: accounts,
     };
   }
 

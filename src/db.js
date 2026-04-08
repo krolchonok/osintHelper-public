@@ -25,7 +25,8 @@ function initSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
-      domain TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      domain TEXT UNIQUE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -170,6 +171,15 @@ function initSchema(db) {
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS project_intelx_leaks (
+      project_id TEXT PRIMARY KEY,
+      data_json TEXT NOT NULL,
+      source TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS scan_jobs (
       run_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -195,6 +205,94 @@ function ensureColumnExists(db, tableName, columnName, addColumnSql) {
   }
 }
 
+function repairLegacyProjectsForeignKeys(db) {
+  const brokenRefs = db
+    .prepare(`
+      SELECT name, sql
+      FROM sqlite_schema
+      WHERE type = 'table'
+        AND sql IS NOT NULL
+        AND sql LIKE '%projects_legacy%'
+    `)
+    .all();
+
+  if (!brokenRefs.length) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    for (const row of brokenRefs) {
+      const tableName = String(row.name || "").trim();
+      const createSql = String(row.sql || "").trim();
+      if (!tableName || !createSql) {
+        continue;
+      }
+
+      const repairTableName = `${tableName}__repair`;
+      const replacedCreateSql = createSql
+        .replace(
+          new RegExp(`^CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?["'\`]?${tableName}["'\`]?`, "i"),
+          `CREATE TABLE ${repairTableName}`,
+        )
+        .replace(/projects_legacy/g, "projects");
+
+      db.exec(replacedCreateSql);
+
+      const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+      const columnList = columns.map((column) => `"${String(column.name).replace(/"/g, "\"\"")}"`).join(", ");
+      if (columnList) {
+        db.exec(`
+          INSERT INTO ${repairTableName} (${columnList})
+          SELECT ${columnList}
+          FROM ${tableName}
+        `);
+      }
+
+      db.exec(`DROP TABLE ${tableName}`);
+      db.exec(`ALTER TABLE ${repairTableName} RENAME TO ${tableName}`);
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function migrateProjectsTable(db) {
+  const columns = db.prepare("PRAGMA table_info(projects)").all();
+  const hasName = columns.some((column) => String(column.name) === "name");
+  if (hasName) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec(`
+      ALTER TABLE projects RENAME TO projects_legacy;
+
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        domain TEXT UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO projects (id, name, domain, created_at, updated_at)
+      SELECT
+        id,
+        COALESCE(NULLIF(TRIM(domain), ''), id),
+        NULLIF(TRIM(domain), ''),
+        created_at,
+        updated_at
+      FROM projects_legacy;
+
+      DROP TABLE projects_legacy;
+    `);
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 let state = null;
 
 function openDatabase(rawPath = process.env.SQLITE_PATH) {
@@ -207,6 +305,9 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
   db.pragma("synchronous = NORMAL");
   db.pragma("busy_timeout = 5000");
 
+  initSchema(db);
+  migrateProjectsTable(db);
+  repairLegacyProjectsForeignKeys(db);
   initSchema(db);
   ensureColumnExists(
     db,
@@ -258,7 +359,9 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
       LEFT JOIN project_domains pd
         ON pd.project_id = p.id
        AND pd.domain = p.domain
-      WHERE pd.id IS NULL
+      WHERE p.domain IS NOT NULL
+        AND TRIM(p.domain) <> ''
+        AND pd.id IS NULL
     `)
     .all();
 

@@ -3,6 +3,7 @@ const providerCatalog = [
   { id: "bufferover", title: "BufferOver", description: "Certificate transparency and passive DNS aggregations." },
   { id: "fullhunt", title: "FullHunt", description: "Attack surface and subdomain discovery API." },
   { id: "googlecse", title: "Google CSE", description: "Google Programmable Search JSON API (token format: API_KEY|CX)." },
+  { id: "intelx", title: "IntelX", description: "IntelX leak search API (supports one or multiple keys separated by commas)." },
   { id: "reconeer", title: "Reconeer", description: "OSINT recon API provider." },
   { id: "securitytrails", title: "SecurityTrails", description: "DNS history and domain intelligence API." },
   { id: "shodan", title: "Shodan", description: "Internet-wide host search platform." },

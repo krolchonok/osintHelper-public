@@ -21,6 +21,9 @@ async function executeVtDeepTask(projectId, onProgress) {
   }
 
   const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+  if (!primaryDomain) {
+    throw new Error("Add a domain to the project before loading VT deep data");
+  }
 
   const settings = new Map(getProviderRuntimeSettings().map((item) => [item.provider, item]));
   const vt = settings.get("virustotal");

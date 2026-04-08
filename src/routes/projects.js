@@ -11,6 +11,7 @@ const { fetchDomainWhois: fetchDomainWhoisLib } = require("../lib/whois");
 const { getProviderRuntimeSettings } = require("../lib/provider-settings");
 const {
   getPrimaryProjectDomain,
+  getProjectScopeDomains,
   isHostInProjectScope,
   listProjectDomains,
   upsertProjectDomain,
@@ -42,9 +43,35 @@ function normalizeHostInput(rawHost) {
 
 function formatProjectScopeMessage(projectDomains) {
   if (!projectDomains.length) {
-    return "Host must be in project scope";
+    return "Add a domain to the project first";
   }
   return `Host must be in project scope (${projectDomains.map((domain) => `*.${domain}`).join(", ")})`;
+}
+
+function normalizeProjectName(rawName) {
+  return String(rawName || "").trim();
+}
+
+function ensureProjectHasPrimaryDomain(project, actionLabel = "run this action") {
+  const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+  if (!primaryDomain) {
+    const error = new Error(`Add a domain to the project before you ${actionLabel}`);
+    error.status = 400;
+    throw error;
+  }
+  return primaryDomain;
+}
+
+function buildProjectFileStem(project) {
+  const preferred =
+    String(project?.name || "").trim() ||
+    String(project?.domain || "").trim() ||
+    String(project?.id || "project").trim();
+  const sanitized = preferred
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized || "project";
 }
 
 function extractRdapEntityName(entity) {
@@ -392,6 +419,40 @@ function saveCachedVtDeep(projectId, result) {
   `).run(projectId, JSON.stringify(result || {}), "virustotal", now, now);
 }
 
+function getCachedIntelxLeaks(projectId) {
+  const { db } = getDbState();
+  const row = db
+    .prepare("SELECT data_json, source, updated_at FROM project_intelx_leaks WHERE project_id = ? LIMIT 1")
+    .get(projectId);
+  if (!row || !row.data_json) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(row.data_json);
+    return {
+      ...data,
+      source: row.source || data.source || "intelx",
+      cachedAt: row.updated_at || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedIntelxLeaks(projectId, result) {
+  const { db } = getDbState();
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO project_intelx_leaks (project_id, data_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(project_id)
+    DO UPDATE SET
+      data_json = excluded.data_json,
+      source = excluded.source,
+      updated_at = excluded.updated_at
+  `).run(projectId, JSON.stringify(result || {}), "intelx", now, now);
+}
+
 function fetchRunEvents(runId, limit = 30) {
   const { db } = getDbState();
   return db
@@ -515,7 +576,8 @@ function mapProjectWithDomains(project, extra = {}) {
   const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
   return {
     id: project.id,
-    domain: primaryDomain,
+    name: String(project.name || project.domain || project.id),
+    domain: primaryDomain || null,
     primaryDomain,
     domains: domains.map((item) => item.domain),
     domainItems: domains,
@@ -642,6 +704,7 @@ router.get("/", requireApiUser(), (_req, res) => {
     .prepare(`
       SELECT
         p.id,
+        p.name,
         p.domain,
         p.created_at,
         p.updated_at,
@@ -711,8 +774,8 @@ router.post("/bulk", requireApiUser(), (req, res) => {
 
   if (toCreate.length > 0) {
     const insertStmt = db.prepare(`
-      INSERT OR IGNORE INTO projects (id, domain, created_at, updated_at)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO projects (id, name, domain, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
     `);
     const insertDomainStmt = db.prepare(`
       INSERT OR IGNORE INTO project_domains (id, project_id, domain, is_primary, created_at, updated_at)
@@ -723,7 +786,7 @@ router.post("/bulk", requireApiUser(), (req, res) => {
       for (const domain of domainList) {
         const projectId = createId();
         const now = nowIso();
-        insertStmt.run(projectId, domain, now, now);
+        insertStmt.run(projectId, domain, domain, now, now);
         insertDomainStmt.run(createId(), projectId, domain, now, now);
       }
     });
@@ -733,7 +796,7 @@ router.post("/bulk", requireApiUser(), (req, res) => {
 
   const createdProjects = db
     .prepare(`
-      SELECT id, domain, created_at
+      SELECT id, name, domain, created_at, updated_at
       FROM projects
       WHERE domain IN (${domains.map(() => "?").join(",")})
       ORDER BY created_at DESC
@@ -749,12 +812,45 @@ router.post("/bulk", requireApiUser(), (req, res) => {
   });
 });
 
+router.post("/", requireApiUser(), (req, res) => {
+  const name = normalizeProjectName(req.body?.name);
+  if (!name) {
+    res.status(400).json({ error: "Project name is required" });
+    return;
+  }
+
+  const { db } = getDbState();
+  const now = nowIso();
+  const projectId = createId();
+  db.prepare(`
+    INSERT INTO projects (id, name, domain, created_at, updated_at)
+    VALUES (?, ?, NULL, ?, ?)
+  `).run(projectId, name, now, now);
+
+  const project = db
+    .prepare("SELECT id, name, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .get(projectId);
+
+  res.json({
+    ok: true,
+    project: mapProjectWithDomains(project, {
+      counts: {
+        subdomains: 0,
+        dnsRecords: 0,
+        runs: 0,
+      },
+      runs: [],
+      whois: null,
+    }),
+  });
+});
+
 router.get("/:id", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
 
   const project = db
-    .prepare("SELECT id, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .prepare("SELECT id, name, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
     .get(id);
 
   if (!project) {
@@ -783,12 +879,14 @@ router.get("/:id", requireApiUser(), (req, res) => {
     }));
 
   const whois = getCachedWhois(id);
+  const intelx = getCachedIntelxLeaks(id);
 
   res.json({
     project: mapProjectWithDomains(project, {
       counts,
       runs,
       whois,
+      intelx,
     }),
   });
 });
@@ -797,7 +895,7 @@ router.post("/:id/domains", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
   const project = db
-    .prepare("SELECT id, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .prepare("SELECT id, name, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
     .get(id);
 
   if (!project) {
@@ -822,6 +920,11 @@ router.post("/:id/domains", requireApiUser(), (req, res) => {
   const now = nowIso();
   const tx = db.transaction(() => {
     upsertProjectDomain(project.id, domain, { isPrimary: false });
+    db.prepare(`
+      UPDATE projects
+      SET domain = COALESCE(NULLIF(domain, ''), ?), updated_at = ?
+      WHERE id = ?
+    `).run(domain, now, project.id);
     db.prepare(`
       INSERT INTO subdomains (id, project_id, host, is_root, created_at, updated_at)
       VALUES (?, ?, ?, 1, ?, ?)
@@ -906,7 +1009,7 @@ function selectProjectSubdomainsByIds(projectId, subdomainIds) {
 router.get("/:id/export/domain-ip.csv", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
-  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -946,7 +1049,7 @@ router.get("/:id/export/domain-ip.csv", requireApiUser(), (req, res) => {
     lines.push(key);
   }
 
-  const fileName = `${project.domain}-domain-ip.csv`;
+  const fileName = `${buildProjectFileStem(project)}-domain-ip.csv`;
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
   res.send(lines.join("\n"));
@@ -955,7 +1058,7 @@ router.get("/:id/export/domain-ip.csv", requireApiUser(), (req, res) => {
 router.post("/:id/export/domain-ip-selected.csv", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
-  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -1005,7 +1108,7 @@ router.post("/:id/export/domain-ip-selected.csv", requireApiUser(), (req, res) =
     lines.push(key);
   }
 
-  const fileName = `${project.domain}-selected-domain-ip.csv`;
+  const fileName = `${buildProjectFileStem(project)}-selected-domain-ip.csv`;
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
   res.send(lines.join("\n"));
@@ -1014,7 +1117,7 @@ router.post("/:id/export/domain-ip-selected.csv", requireApiUser(), (req, res) =
 router.post("/:id/subdomains", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
-  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
 
   if (!project) {
     res.status(404).json({ error: "Project not found" });
@@ -1026,7 +1129,7 @@ router.post("/:id/subdomains", requireApiUser(), (req, res) => {
     res.status(400).json({ error: "Invalid host" });
     return;
   }
-  const projectDomains = listProjectDomains(project.id).map((item) => item.domain);
+  const projectDomains = getProjectScopeDomains(project.id, project.domain);
   if (!isHostInProjectScope(host, projectDomains)) {
     res.status(400).json({ error: formatProjectScopeMessage(projectDomains) });
     return;
@@ -1122,7 +1225,7 @@ router.post("/:id/subdomains/delete-selected", requireApiUser(), (req, res) => {
 router.put("/:id/subdomains/:subdomainId", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id, subdomainId } = req.params;
-  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
 
   if (!project) {
     res.status(404).json({ error: "Project not found" });
@@ -1152,7 +1255,7 @@ router.put("/:id/subdomains/:subdomainId", requireApiUser(), (req, res) => {
     res.status(400).json({ error: "Invalid host" });
     return;
   }
-  const projectDomains = listProjectDomains(project.id).map((item) => item.domain);
+  const projectDomains = getProjectScopeDomains(project.id, project.domain);
   if (!isHostInProjectScope(host, projectDomains)) {
     res.status(400).json({ error: formatProjectScopeMessage(projectDomains) });
     return;
@@ -1295,7 +1398,7 @@ router.get("/:id/whois", requireApiUser(), async (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
   const refresh = String(req.query?.refresh || "").trim() === "1";
-  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -1310,7 +1413,7 @@ router.get("/:id/whois", requireApiUser(), async (req, res) => {
   }
 
   try {
-    const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+    const primaryDomain = ensureProjectHasPrimaryDomain(project, "run WHOIS");
     const whois = await fetchDomainWhoisLib(primaryDomain);
     saveCachedWhois(project.id, whois);
     res.json({ whois, cached: false });
@@ -1324,7 +1427,7 @@ router.get("/:id/vt-deep", requireApiUser(), async (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
   const refresh = String(req.query?.refresh || "").trim() === "1";
-  const project = db.prepare("SELECT id, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -1346,7 +1449,7 @@ router.get("/:id/vt-deep", requireApiUser(), async (req, res) => {
   }
 
   try {
-    const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+    const primaryDomain = ensureProjectHasPrimaryDomain(project, "load VT deep data");
     const result = await fetchVtDeepForDomain(primaryDomain, vt.token);
     saveCachedVtDeep(project.id, result);
     res.json({ result, cached: false });
@@ -1354,6 +1457,28 @@ router.get("/:id/vt-deep", requireApiUser(), async (req, res) => {
     const message = error instanceof Error ? error.message : "Failed to load VirusTotal deep data";
     res.status(400).json({ error: message });
   }
+});
+
+router.get("/:id/intelx-leaks", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const cached = getCachedIntelxLeaks(project.id);
+  if (cached) {
+    res.json({ result: cached, cached: true });
+    return;
+  }
+
+  res.json({
+    result: null,
+    cached: false,
+    message: "No IntelX data yet. Start the IntelX task to collect and save results.",
+  });
 });
 
 router.post("/:id/vt-deep-task", requireApiUser(), (req, res) => {
@@ -1374,6 +1499,33 @@ router.post("/:id/vt-deep-task", requireApiUser(), (req, res) => {
     taskKind: "VT_DEEP",
   });
   res.json({ ok: true, runId: run.id, taskKind: "VT_DEEP" });
+});
+
+router.post("/:id/intelx-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const customQuery = String(req.body?.customQuery || "").trim();
+  const taskPayload = customQuery ? { customQuery } : null;
+  const run = startRun(id, "PASSIVE_SCAN", {
+    scanScope: "core",
+    taskKind: "INTELX_LEAKS",
+    taskPayload,
+  });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "INTELX_LEAKS",
+    taskPayload,
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "INTELX_LEAKS", customQuery: customQuery || null });
 });
 
 router.post("/:id/whois-task", requireApiUser(), (req, res) => {

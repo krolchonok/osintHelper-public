@@ -1,6 +1,6 @@
 const { Resolver } = require("node:dns/promises");
 const { getDbState } = require("../db");
-const { listProjectDomains } = require("./project-domains");
+const { getProjectScopeDomains } = require("./project-domains");
 const { clampProgress, createId, nowIso } = require("./utils");
 
 const FAST_RESOLVERS = ["8.8.8.8"];
@@ -175,8 +175,10 @@ async function executeDnsResolve(projectId, onProgress, scanScope = "core", opti
     throw new Error("Project not found");
   }
 
-  const configuredDomains = listProjectDomains(project.id).map((item) => item.domain);
-  const rootDomains = configuredDomains.length ? configuredDomains : [project.domain];
+  const rootDomains = getProjectScopeDomains(project.id, project.domain);
+  if (!rootDomains.length) {
+    throw new Error("Add at least one domain to the project before running DNS resolve");
+  }
 
   const subdomains = db
     .prepare("SELECT id, host FROM subdomains WHERE project_id = ?")

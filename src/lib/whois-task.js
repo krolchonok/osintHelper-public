@@ -20,6 +20,9 @@ async function executeWhoisTask(projectId, onProgress) {
   }
 
   const primaryDomain = getPrimaryProjectDomain(project.id, project.domain);
+  if (!primaryDomain) {
+    throw new Error("Add a domain to the project before running WHOIS");
+  }
   await emit(20, `WHOIS request: ${primaryDomain}`);
   const whois = await fetchDomainWhois(primaryDomain);
 

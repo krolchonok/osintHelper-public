@@ -26,6 +26,16 @@ function getPrimaryProjectDomain(projectId, fallbackDomain = "") {
   return primary ? primary.domain : String(fallbackDomain || "").trim().toLowerCase();
 }
 
+function getProjectScopeDomains(projectId, fallbackDomain = "") {
+  const domains = listProjectDomains(projectId).map((item) => item.domain);
+  if (domains.length) {
+    return domains;
+  }
+
+  const fallback = String(fallbackDomain || "").trim().toLowerCase();
+  return fallback ? [fallback] : [];
+}
+
 function isHostInProjectScope(host, projectDomains) {
   const normalizedHost = String(host || "").trim().toLowerCase();
   return projectDomains.some((domain) => normalizedHost === domain || normalizedHost.endsWith(`.${domain}`));
@@ -54,6 +64,7 @@ function upsertProjectDomain(projectId, domain, options = {}) {
 
 module.exports = {
   getPrimaryProjectDomain,
+  getProjectScopeDomains,
   isHostInProjectScope,
   listProjectDomains,
   upsertProjectDomain,

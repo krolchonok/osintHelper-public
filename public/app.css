@@ -873,11 +873,142 @@ body.ui-mode-effects .project-card {
   min-width: 170px;
 }
 
+#project-action-message,
+#subdomain-action-message,
+#vtdeep-action-message,
+#intelx-action-message {
+  margin-top: 12px;
+}
+
+.provider-row-progress {
+  margin-top: 10px;
+}
+
+.provider-row-intelx td {
+  vertical-align: top;
+}
+
+.intelx-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.intelx-block {
+  padding: 12px;
+  border: 1px solid rgba(126, 161, 181, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(13, 22, 29, 0.72), rgba(10, 18, 24, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.intelx-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.intelx-block-head strong {
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+  color: #d8e7f0;
+}
+
+.intelx-block-add .intelx-block-head,
+.intelx-block-actions .intelx-block-head,
+.intelx-block-usage .intelx-block-head {
+  margin-bottom: 12px;
+}
+
+.intelx-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.intelx-key-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(126, 161, 181, 0.18);
+  border-radius: 12px;
+  background: rgba(9, 16, 22, 0.58);
+}
+
+.intelx-key-input-row {
+  margin-top: 0;
+  align-items: stretch;
+}
+
+.intelx-key-input {
+  flex: 1 1 220px;
+}
+
+.intelx-actions-row {
+  margin-bottom: 12px;
+}
+
+.intelx-quota-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.intelx-quota-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(126, 161, 181, 0.18);
+  border-radius: 14px;
+  background: rgba(8, 16, 22, 0.58);
+}
+
+.intelx-quota-card-total {
+  border-color: rgba(78, 205, 196, 0.3);
+  background: linear-gradient(180deg, rgba(14, 35, 36, 0.72), rgba(10, 24, 26, 0.62));
+}
+
+.intelx-progress-fill {
+  background: linear-gradient(90deg, var(--ok), var(--accent));
+}
+
 #project-page-root {
   display: grid;
   grid-template-columns: minmax(282px, 326px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
+}
+
+#project-actions-panel {
+  position: sticky;
+  top: 94px;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(126, 161, 181, 0.45) rgba(9, 18, 24, 0.28);
+}
+
+#project-actions-panel::-webkit-scrollbar {
+  width: 10px;
+}
+
+#project-actions-panel::-webkit-scrollbar-track {
+  background: rgba(9, 18, 24, 0.28);
+  border-radius: 999px;
+}
+
+#project-actions-panel::-webkit-scrollbar-thumb {
+  background: rgba(126, 161, 181, 0.45);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+#project-actions-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 193, 215, 0.58);
+  background-clip: padding-box;
 }
 
 #project-actions-panel .panel-header {
@@ -990,8 +1121,6 @@ body.ui-mode-effects .project-card {
 }
 
 .project-column-left {
-  position: sticky;
-  top: 94px;
   align-self: start;
 }
 
@@ -1061,6 +1190,12 @@ body.ui-mode-effects .project-card {
 
   .project-column-left {
     position: static;
+  }
+
+  #project-actions-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 }
 

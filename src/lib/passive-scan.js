@@ -2,7 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { getDbState } = require("../db");
 const { config } = require("./config");
-const { isHostInProjectScope, listProjectDomains } = require("./project-domains");
+const { getProjectScopeDomains, isHostInProjectScope } = require("./project-domains");
 const { getProviderRuntimeSettings } = require("./provider-settings");
 const { clampProgress, createId, nowIso } = require("./utils");
 
@@ -1234,8 +1234,10 @@ async function executePassiveScan(projectId, onProgress, scanScope = "core") {
     throw new Error("Project not found");
   }
 
-  const configuredDomains = listProjectDomains(project.id).map((item) => item.domain);
-  const domains = configuredDomains.length ? configuredDomains : [project.domain];
+  const domains = getProjectScopeDomains(project.id, project.domain);
+  if (!domains.length) {
+    throw new Error("Add at least one domain to the project before running passive scan");
+  }
 
   const isFullyPassive = scanScope === "fullypassive";
   const webScope = isFullyPassive ? "all" : scanScope;
