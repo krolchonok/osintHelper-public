@@ -225,6 +225,18 @@
     }
   }
 
+  function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-8") {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function friendlyError(error, fallback) {
     if (!error) {
       return fallback;
@@ -886,6 +898,8 @@
             ? "WHOIS"
             : run.taskKind === "VT_DEEP"
               ? "VT_DEEP"
+              : run.taskKind === "WEBARCHIVE"
+                ? "WEBARCHIVE"
               : run.taskKind === "INTELX_LEAKS"
                 ? "INTELX_LEAKS"
               : run.taskKind === "DNS_RESOLVE_SELECTED"
@@ -894,6 +908,7 @@
         const scopeLabel =
           run.taskKind === "WHOIS" ||
           run.taskKind === "VT_DEEP" ||
+          run.taskKind === "WEBARCHIVE" ||
           run.taskKind === "INTELX_LEAKS" ||
           run.taskKind === "DNS_RESOLVE_SELECTED"
             ? "-"
@@ -982,6 +997,9 @@
     }
     if (run.taskKind === "VT_DEEP") {
       return "VT_DEEP";
+    }
+    if (run.taskKind === "WEBARCHIVE") {
+      return "WEBARCHIVE";
     }
     if (run.taskKind === "INTELX_LEAKS") {
       return "INTELX_LEAKS";
@@ -1286,6 +1304,380 @@
     `;
   }
 
+  function buildWebArchiveTable(webarchiveData) {
+    if (!webarchiveData) {
+      return '<p class="hint">Данные WebArchive еще не загружены. Запустите задачу WebArchive, чтобы сохранить результаты в проект.</p>';
+    }
+
+    const summary = webarchiveData.summary || {};
+    const metadataSummary = webarchiveData.metadataSummary || {};
+    const statCards = [
+      { label: "URL", value: Number(summary.totalUrls) || 0 },
+      { label: "Снимки", value: Number(summary.totalCaptures) || 0 },
+      { label: "Хосты", value: Number(summary.hosts) || 0 },
+      { label: "PDF", value: Number(summary.pdf) || 0 },
+      { label: "DOC", value: Number(summary.doc) || 0 },
+      { label: "DOCX", value: Number(summary.docx) || 0 },
+      { label: "Авторы", value: Number(metadataSummary.withAuthor) || 0 },
+      { label: "Редакторы", value: Number(metadataSummary.withEditor) || 0 },
+      { label: "Почты", value: Number(metadataSummary.withEmails) || 0 },
+    ]
+      .map(
+        (item) => `
+          <div class="data-stat-card">
+            <div class="data-stat-value mono">${escapeHtml(String(item.value))}</div>
+            <div class="data-stat-label">${escapeHtml(item.label)}</div>
+          </div>
+        `,
+      )
+      .join("");
+
+    const meta = [
+      Array.isArray(webarchiveData.terms) && webarchiveData.terms.length
+        ? `Домены: ${webarchiveData.terms.join(", ")}`
+        : "",
+      summary.earliestCapture ? `Первый снимок: ${formatDate(summary.earliestCapture)}` : "",
+      summary.latestCapture ? `Последний снимок: ${formatDate(summary.latestCapture)}` : "",
+      metadataSummary.processed ? `Метаданные: ${metadataSummary.processed}` : "",
+      metadataSummary.failed ? `Ошибки: ${metadataSummary.failed}` : "",
+      webarchiveData.cachedAt ? `Кэшировано: ${formatDate(webarchiveData.cachedAt)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    const documents = Array.isArray(webarchiveData.documents) ? webarchiveData.documents : [];
+    const recentUrls = Array.isArray(webarchiveData.recentUrls) ? webarchiveData.recentUrls : [];
+
+    const documentRows = documents.length
+      ? documents
+          .map(
+            (item) => {
+              const details = [
+                item.metadata?.title ? `title: ${item.metadata.title}` : "",
+                item.metadata?.subject ? `subject: ${item.metadata.subject}` : "",
+                item.metadata?.keywords ? `keywords: ${item.metadata.keywords}` : "",
+                item.metadata?.company ? `company: ${item.metadata.company}` : "",
+                item.metadata?.manager ? `manager: ${item.metadata.manager}` : "",
+                item.metadata?.application ? `app: ${item.metadata.application}` : "",
+                item.metadata?.appVersion ? `ver: ${item.metadata.appVersion}` : "",
+                item.metadata?.producer ? `producer: ${item.metadata.producer}` : "",
+                item.metadata?.revision ? `revision: ${item.metadata.revision}` : "",
+                item.metadata?.pages ? `pages: ${item.metadata.pages}` : "",
+                item.metadata?.words ? `words: ${item.metadata.words}` : "",
+                item.metadata?.characters ? `chars: ${item.metadata.characters}` : "",
+                item.metadata?.createdAt ? `created: ${formatDate(item.metadata.createdAt)}` : "",
+                item.metadata?.modifiedAt ? `modified: ${formatDate(item.metadata.modifiedAt)}` : "",
+              ].filter(Boolean).join(" | ");
+
+              return `
+              <tr>
+                <td><span class="pill tiny mono">${escapeHtml(String(item.type || "-").toUpperCase())}</span></td>
+                <td class="mono">${escapeHtml(item.host || "-")}</td>
+                <td class="mono"><a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url || "-")}</a></td>
+                <td>${escapeHtml(formatDate(item.capturedAt))}</td>
+                <td>${escapeHtml(item.metadata?.author || "-")}</td>
+                <td>${escapeHtml(item.metadata?.lastModifiedBy || "-")}</td>
+                <td>${escapeHtml(item.metadata?.title || "-")}</td>
+                <td>${escapeHtml(item.metadata?.company || item.metadata?.application || item.metadata?.producer || "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.metadata?.emails) && item.metadata.emails.length ? item.metadata.emails.join(", ") : "-")}</td>
+                <td>${item.length != null ? escapeHtml(String(item.length)) : "-"}</td>
+                <td>${escapeHtml(item.metadataStatus || "-")}</td>
+                <td class="webarchive-metadata-cell">${escapeHtml(details || "-")}</td>
+                <td>${item.archiveUrl ? `<a href="${escapeHtml(item.archiveUrl)}" target="_blank" rel="noopener noreferrer">Wayback</a>` : "-"}</td>
+              </tr>
+            `;
+            },
+          )
+          .join("")
+      : `
+        <tr>
+          <td colspan="13">Документы PDF/DOC/DOCX не найдены.</td>
+        </tr>
+      `;
+
+    const recentUrlRows = recentUrls.length
+      ? recentUrls
+          .map(
+            (item) => `
+              <tr>
+                <td class="mono">${escapeHtml(item.host || "-")}</td>
+                <td class="mono"><a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url || "-")}</a></td>
+                <td>${escapeHtml(item.mimetype || "-")}</td>
+                <td>${escapeHtml(formatDate(item.capturedAt))}</td>
+                <td>${item.archiveUrl ? `<a href="${escapeHtml(item.archiveUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a>` : "-"}</td>
+              </tr>
+            `,
+          )
+          .join("")
+      : `
+        <tr>
+          <td colspan="5">Архивные URL не найдены.</td>
+        </tr>
+      `;
+
+    return `
+      <div class="stack-lg">
+        <div class="hint">${escapeHtml(meta || "Результаты WebArchive")}</div>
+        <div class="data-stat-grid">${statCards}</div>
+        <div class="stack-md">
+          <div class="panel-header">
+            <h3>Документы</h3>
+            <p>PDF, DOC, DOCX из Wayback</p>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Тип</th>
+                  <th>Хост</th>
+                  <th>URL</th>
+                  <th>Снимок</th>
+                  <th>Автор</th>
+                  <th>Редактор</th>
+                  <th>Title</th>
+                  <th>App/Company</th>
+                  <th>Почты</th>
+                  <th>Размер</th>
+                  <th>Статус</th>
+                  <th>Полезные поля</th>
+                  <th>Архив</th>
+                </tr>
+              </thead>
+              <tbody>${documentRows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="stack-md">
+          <div class="panel-header">
+            <h3>Последние URL</h3>
+            <p>Сводка по снимкам Wayback</p>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Хост</th>
+                  <th>URL</th>
+                  <th>MIME</th>
+                  <th>Снимок</th>
+                  <th>Архив</th>
+                </tr>
+              </thead>
+              <tbody>${recentUrlRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildEmailsTable(emailData, selectedEmailSourceKeys = new Set()) {
+    if (!emailData) {
+      return '<p class="hint">Почты еще не собраны.</p>';
+    }
+
+    const summary = emailData.summary || {};
+    const items = Array.isArray(emailData.emails) ? emailData.emails : [];
+    const statCards = [
+      { label: "Всего", value: Number(summary.total) || 0 },
+      { label: "IntelX", value: Number(summary.intelx) || 0 },
+      { label: "WebArchive", value: Number(summary.webarchive) || 0 },
+      { label: "WHOIS", value: Number(summary.whois) || 0 },
+      { label: "Авторы", value: Number(summary.authors) || 0 },
+      { label: "Редакторы", value: Number(summary.editors) || 0 },
+    ]
+      .map(
+        (item) => `
+          <div class="data-stat-card">
+            <div class="data-stat-value mono">${escapeHtml(String(item.value))}</div>
+            <div class="data-stat-label">${escapeHtml(item.label)}</div>
+          </div>
+        `,
+      )
+      .join("");
+
+    if (!items.length) {
+      return `
+        <div class="stack-lg">
+          <div class="data-stat-grid">${statCards}</div>
+          <p class="hint">Почты из IntelX, WebArchive и WHOIS пока не найдены.</p>
+        </div>
+      `;
+    }
+
+    const rows = items
+      .map((item) => {
+        const foundData = [
+          Array.isArray(item.webarchiveAuthors) && item.webarchiveAuthors.length
+            ? `authors: ${item.webarchiveAuthors.join(", ")}`
+            : "",
+          Array.isArray(item.webarchiveEditors) && item.webarchiveEditors.length
+            ? `editors: ${item.webarchiveEditors.join(", ")}`
+            : "",
+          Array.isArray(item.webarchiveTitles) && item.webarchiveTitles.length
+            ? `titles: ${item.webarchiveTitles.join(", ")}`
+            : "",
+          Array.isArray(item.webarchiveCompanies) && item.webarchiveCompanies.length
+            ? `company: ${item.webarchiveCompanies.join(", ")}`
+            : "",
+          Array.isArray(item.intelxSnippets) && item.intelxSnippets.length
+            ? `intelx: ${item.intelxSnippets.join(" | ")}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" || ");
+
+        return `
+          <tr>
+            <td>
+              <input
+                type="checkbox"
+                data-action="toggle-email-select"
+                data-email-source-key="${escapeHtml(item.sourceKey || "")}"
+                ${selectedEmailSourceKeys.has(String(item.sourceKey || "")) ? "checked" : ""}
+              />
+            </td>
+            <td class="mono">${escapeHtml(item.email || "-")}</td>
+            <td>${escapeHtml(Array.isArray(item.sources) ? item.sources.join(", ") : "-")}</td>
+            <td>${escapeHtml(Array.isArray(item.intelxTerms) && item.intelxTerms.length ? item.intelxTerms.join(", ") : "-")}</td>
+            <td>${escapeHtml(Array.isArray(item.webarchiveHosts) && item.webarchiveHosts.length ? item.webarchiveHosts.join(", ") : "-")}</td>
+            <td class="webarchive-metadata-cell">${escapeHtml(foundData || "-")}</td>
+            <td>${item.whois ? "Да" : "-"}</td>
+            <td>${item.isManual ? '<span class="pill tiny">manual</span>' : "-"}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const authors = Array.isArray(emailData.authors) ? emailData.authors : [];
+    const editors = Array.isArray(emailData.editors) ? emailData.editors : [];
+
+    const authorRows = authors.length
+      ? authors
+          .map((item) => {
+            const links = Array.isArray(item.urls) && item.urls.length
+              ? item.urls
+                  .slice(0, 3)
+                  .map(
+                    (url, index) =>
+                      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Файл ${index + 1}</a>`,
+                  )
+                  .join(" · ")
+              : "-";
+            return `
+              <tr>
+                <td>${escapeHtml(item.name || "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.hosts) && item.hosts.length ? item.hosts.join(", ") : "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.documentTypes) && item.documentTypes.length ? item.documentTypes.join(", ") : "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.titles) && item.titles.length ? item.titles.join(" | ") : "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.companies) && item.companies.length ? item.companies.join(", ") : "-")}</td>
+                <td>${links}</td>
+              </tr>
+            `;
+          })
+          .join("")
+      : `
+        <tr>
+          <td colspan="6">Авторы не найдены.</td>
+        </tr>
+      `;
+
+    const editorRows = editors.length
+      ? editors
+          .map((item) => {
+            const links = Array.isArray(item.urls) && item.urls.length
+              ? item.urls
+                  .slice(0, 3)
+                  .map(
+                    (url, index) =>
+                      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Файл ${index + 1}</a>`,
+                  )
+                  .join(" · ")
+              : "-";
+            return `
+              <tr>
+                <td>${escapeHtml(item.name || "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.hosts) && item.hosts.length ? item.hosts.join(", ") : "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.documentTypes) && item.documentTypes.length ? item.documentTypes.join(", ") : "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.titles) && item.titles.length ? item.titles.join(" | ") : "-")}</td>
+                <td>${escapeHtml(Array.isArray(item.companies) && item.companies.length ? item.companies.join(", ") : "-")}</td>
+                <td>${links}</td>
+              </tr>
+            `;
+          })
+          .join("")
+      : `
+        <tr>
+          <td colspan="6">Редакторы не найдены.</td>
+        </tr>
+      `;
+
+    return `
+      <div class="stack-lg">
+        <div class="data-stat-grid">${statCards}</div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Email</th>
+                <th>Источники</th>
+                <th>Термы IntelX</th>
+                <th>Хосты WebArchive</th>
+                <th>Найденные данные</th>
+                <th>WHOIS</th>
+                <th>Тип</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div class="stack-md">
+          <div class="panel-header">
+            <h3>Авторы</h3>
+            <p>Из WebArchive документов</p>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Имя</th>
+                  <th>Хосты</th>
+                <th>Типы</th>
+                <th>Title</th>
+                <th>Company</th>
+                <th>Файлы</th>
+              </tr>
+            </thead>
+            <tbody>${authorRows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="stack-md">
+          <div class="panel-header">
+            <h3>Редакторы</h3>
+            <p>Из WebArchive документов</p>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Имя</th>
+                  <th>Хосты</th>
+                <th>Типы</th>
+                <th>Title</th>
+                <th>Company</th>
+                <th>Файлы</th>
+              </tr>
+            </thead>
+            <tbody>${editorRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   async function renderProjectPage(projectId) {
     let payload;
     let passiveSourcePayload = null;
@@ -1317,9 +1709,12 @@
     let runs = Array.isArray(project.runs) ? project.runs : [];
     let subdomains = [];
     let vtDeepData = null;
+    let webarchiveData = project.webarchive || null;
     let intelxData = null;
+    let emailData = project.emails || null;
     let activeDataTab = "subdomains";
     const selectedSubdomainIds = new Set();
+    const selectedEmailSourceKeys = new Set();
     let selectedRunId = runs[0] ? runs[0].id : null;
     const initialSubdomainsTotal = Number(project.counts && project.counts.subdomains) || 0;
     let subdomainsPagination = {
@@ -1414,6 +1809,7 @@
               <div class="action-group">
                 <div class="action-group-title">DNS и WHOIS</div>
                 <button class="btn btn-ghost" id="run-whois-btn">WHOIS (корневой домен)</button>
+                <button class="btn btn-ghost" id="run-webarchive-btn">WebArchive</button>
                 <button class="btn btn-secondary" id="run-intelx-btn">Поиск утечек IntelX</button>
                 <button class="btn btn-secondary" id="run-resolve-fast-btn">DNS-резолв (быстрый)</button>
                 <button class="btn btn-ghost" id="run-resolve-extended-btn">DNS-резолв (расширенный)</button>
@@ -1440,6 +1836,8 @@
             <div class="row wrap">
               <button class="btn btn-primary" id="tab-subdomains-btn" type="button">Поддомены</button>
               <button class="btn btn-ghost" id="tab-whois-btn" type="button">WHOIS</button>
+              <button class="btn btn-ghost" id="tab-webarchive-btn" type="button">WebArchive</button>
+              <button class="btn btn-ghost" id="tab-emails-btn" type="button">УЗ</button>
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
             </div>
@@ -1465,6 +1863,31 @@
                 </div>
                 <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
               </div>
+            </div>
+            <div id="webarchive-panel" style="display:none">
+              <div class="stack-md">
+                <div class="row wrap">
+                  <button class="btn btn-secondary" id="webarchive-load-btn" type="button">Загрузить WebArchive</button>
+                  <button class="btn btn-ghost" id="webarchive-refresh-metadata-btn" type="button">Переизвлечь метаданные</button>
+                </div>
+                <div class="hint">Ищет URL и документы из Wayback для доменов проекта и извлекает метаданные из PDF, DOC и DOCX.</div>
+              </div>
+              <div id="webarchive-action-message"></div>
+              <div id="webarchive-table-root"></div>
+            </div>
+            <div id="emails-panel" style="display:none">
+              <div class="stack-md">
+                <div class="row wrap">
+                  <button class="btn btn-primary" id="emails-add-btn" type="button">Добавить УЗ</button>
+                  <button class="btn btn-danger" id="emails-delete-selected-btn" type="button">Удалить выбранные</button>
+                  <button class="btn btn-ghost" id="emails-edit-selected-btn" type="button">Изменить выбранный</button>
+                  <button class="btn btn-secondary" id="emails-refresh-btn" type="button">Обновить УЗ</button>
+                  <button class="btn btn-ghost" id="emails-export-csv-btn" type="button">Экспорт CSV УЗ</button>
+                </div>
+                <div class="hint">Агрегирует почты и связанные найденные данные из IntelX, WebArchive и WHOIS.</div>
+              </div>
+              <div id="emails-action-message"></div>
+              <div id="emails-table-root"></div>
             </div>
             <div id="vtdeep-panel" style="display:none">
               <div class="row wrap">
@@ -1508,6 +1931,7 @@
     const passiveScopeInfoBtn = document.getElementById("passive-scope-info-btn");
     const passiveScopeInfo = document.getElementById("passive-scope-info");
     const runWhoisBtn = document.getElementById("run-whois-btn");
+    const runWebarchiveBtn = document.getElementById("run-webarchive-btn");
     const runIntelxBtn = document.getElementById("run-intelx-btn");
     const runResolveFastBtn = document.getElementById("run-resolve-fast-btn");
     const runResolveExtendedBtn = document.getElementById("run-resolve-extended-btn");
@@ -1525,10 +1949,14 @@
     const subdomainsStatusText = document.getElementById("subdomains-status-text");
     const tabSubdomainsBtn = document.getElementById("tab-subdomains-btn");
     const tabWhoisBtn = document.getElementById("tab-whois-btn");
+    const tabWebarchiveBtn = document.getElementById("tab-webarchive-btn");
+    const tabEmailsBtn = document.getElementById("tab-emails-btn");
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
+    const webarchivePanel = document.getElementById("webarchive-panel");
+    const emailsPanel = document.getElementById("emails-panel");
     const vtDeepPanel = document.getElementById("vtdeep-panel");
     const intelxPanel = document.getElementById("intelx-panel");
     const subdomainCreateForm = document.getElementById("subdomain-create-form");
@@ -1542,6 +1970,17 @@
     const vtDeepLoadBtn = document.getElementById("vtdeep-load-btn");
     const vtDeepActionMessageEl = document.getElementById("vtdeep-action-message");
     const vtDeepTableRoot = document.getElementById("vtdeep-table-root");
+    const webarchiveLoadBtn = document.getElementById("webarchive-load-btn");
+    const webarchiveRefreshMetadataBtn = document.getElementById("webarchive-refresh-metadata-btn");
+    const webarchiveActionMessageEl = document.getElementById("webarchive-action-message");
+    const webarchiveTableRoot = document.getElementById("webarchive-table-root");
+    const emailsRefreshBtn = document.getElementById("emails-refresh-btn");
+    const emailsAddBtn = document.getElementById("emails-add-btn");
+    const emailsDeleteSelectedBtn = document.getElementById("emails-delete-selected-btn");
+    const emailsEditSelectedBtn = document.getElementById("emails-edit-selected-btn");
+    const emailsExportCsvBtn = document.getElementById("emails-export-csv-btn");
+    const emailsActionMessageEl = document.getElementById("emails-action-message");
+    const emailsTableRoot = document.getElementById("emails-table-root");
     const intelxLoadBtn = document.getElementById("intelx-load-btn");
     const intelxCustomQueryInput = document.getElementById("intelx-custom-query");
     const intelxActionMessageEl = document.getElementById("intelx-action-message");
@@ -1624,17 +2063,41 @@
         kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
     }
 
+    function setWebarchiveMessage(message, kind) {
+      if (!message) {
+        webarchiveActionMessageEl.innerHTML = "";
+        return;
+      }
+      webarchiveActionMessageEl.innerHTML =
+        kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
+    }
+
+    function setEmailsMessage(message, kind) {
+      if (!message) {
+        emailsActionMessageEl.innerHTML = "";
+        return;
+      }
+      emailsActionMessageEl.innerHTML =
+        kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
+    }
+
     function renderDataTab() {
       const showSubdomains = activeDataTab === "subdomains";
       const showWhois = activeDataTab === "whois";
+      const showWebarchive = activeDataTab === "webarchive";
+      const showEmails = activeDataTab === "emails";
       const showVtDeep = activeDataTab === "vtdeep";
       const showIntelx = activeDataTab === "intelx";
       subdomainsPanel.style.display = showSubdomains ? "" : "none";
       whoisPanel.style.display = showWhois ? "" : "none";
+      webarchivePanel.style.display = showWebarchive ? "" : "none";
+      emailsPanel.style.display = showEmails ? "" : "none";
       vtDeepPanel.style.display = showVtDeep ? "" : "none";
       intelxPanel.style.display = showIntelx ? "" : "none";
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
+      tabWebarchiveBtn.className = showWebarchive ? "btn btn-primary" : "btn btn-ghost";
+      tabEmailsBtn.className = showEmails ? "btn btn-primary" : "btn btn-ghost";
       tabVtDeepBtn.className = showVtDeep ? "btn btn-primary" : "btn btn-ghost";
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
     }
@@ -1977,6 +2440,42 @@
       }
     }
 
+    function renderWebArchive() {
+      webarchiveTableRoot.innerHTML = buildWebArchiveTable(webarchiveData);
+      setWebarchiveMessage("", "");
+    }
+
+    function renderEmails() {
+      const rows = Array.isArray(emailData?.emails) ? emailData.emails : [];
+      for (const key of Array.from(selectedEmailSourceKeys)) {
+        if (!rows.some((item) => String(item.sourceKey || "") === key)) {
+          selectedEmailSourceKeys.delete(key);
+        }
+      }
+      emailsDeleteSelectedBtn.disabled = selectedEmailSourceKeys.size === 0;
+      emailsEditSelectedBtn.disabled = selectedEmailSourceKeys.size !== 1;
+      emailsDeleteSelectedBtn.textContent = selectedEmailSourceKeys.size > 0
+        ? `Удалить выбранные [${selectedEmailSourceKeys.size}]`
+        : "Удалить выбранные";
+      emailsTableRoot.innerHTML = buildEmailsTable(emailData, selectedEmailSourceKeys);
+      const checkboxes = emailsTableRoot.querySelectorAll("[data-action='toggle-email-select']");
+      checkboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const key = checkbox.getAttribute("data-email-source-key");
+          if (!key) {
+            return;
+          }
+          if (checkbox.checked) {
+            selectedEmailSourceKeys.add(String(key));
+          } else {
+            selectedEmailSourceKeys.delete(String(key));
+          }
+          renderEmails();
+        });
+      });
+      setEmailsMessage("", "");
+    }
+
     async function refreshSubdomains(forceRender = false, options = {}) {
       const requestedPage = Math.max(1, Number(options.page) || Number(subdomainsPagination.page) || 1);
       const requestedLimit = normalizeSubdomainsPageSize(
@@ -2055,6 +2554,32 @@
       }
     }
 
+    async function refreshWebArchiveInfo() {
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/webarchive`);
+        if (disposed) {
+          return;
+        }
+        webarchiveData = payload && payload.result ? payload.result : null;
+        renderWebArchive();
+      } catch (error) {
+        setWebarchiveMessage(friendlyError(error, "Не удалось загрузить данные WebArchive"), "error");
+      }
+    }
+
+    async function refreshEmailsInfo() {
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/emails`);
+        if (disposed) {
+          return;
+        }
+        emailData = payload && payload.result ? payload.result : null;
+        renderEmails();
+      } catch (error) {
+        setEmailsMessage(friendlyError(error, "Не удалось загрузить УЗ"), "error");
+      }
+    }
+
     async function refreshIntelxInfo() {
       try {
         const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/intelx-leaks`);
@@ -2114,8 +2639,17 @@
         if (runs.some((run) => run.taskKind === "VT_DEEP" && run.status === "SUCCESS")) {
           await refreshVtDeepInfo();
         }
+        if (runs.some((run) => run.taskKind === "WEBARCHIVE" && run.status === "SUCCESS")) {
+          await refreshWebArchiveInfo();
+          await refreshEmailsInfo();
+        }
+        if (runs.some((run) => run.taskKind === "WEBARCHIVE_METADATA" && run.status === "SUCCESS")) {
+          await refreshWebArchiveInfo();
+          await refreshEmailsInfo();
+        }
         if (runs.some((run) => run.taskKind === "INTELX_LEAKS" && run.status === "SUCCESS")) {
           await refreshIntelxInfo();
+          await refreshEmailsInfo();
         }
         const hasActiveRuns = runs.some((run) => ACTIVE_STATUSES.has(run.status));
         const shouldRefreshSubdomains = hasActiveRuns || hadActiveRuns;
@@ -2134,6 +2668,7 @@
       runPassiveProviderSelect.disabled = disabled || !passiveSources.length;
       runPassiveProviderBtn.disabled = disabled || !passiveSources.length;
       runWhoisBtn.disabled = disabled;
+      runWebarchiveBtn.disabled = disabled;
       runIntelxBtn.disabled = disabled;
       runResolveFastBtn.disabled = disabled;
       runResolveExtendedBtn.disabled = disabled;
@@ -2142,6 +2677,13 @@
       projectDomainInput.disabled = disabled;
       projectDomainSubmit.disabled = disabled;
       vtDeepLoadBtn.disabled = disabled;
+      webarchiveLoadBtn.disabled = disabled;
+      webarchiveRefreshMetadataBtn.disabled = disabled;
+      emailsRefreshBtn.disabled = disabled;
+      emailsAddBtn.disabled = disabled;
+      emailsDeleteSelectedBtn.disabled = disabled || selectedEmailSourceKeys.size === 0;
+      emailsEditSelectedBtn.disabled = disabled || selectedEmailSourceKeys.size !== 1;
+      emailsExportCsvBtn.disabled = disabled;
       intelxLoadBtn.disabled = disabled;
       resolveSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       deleteSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
@@ -2206,6 +2748,14 @@
       );
     });
 
+    runWebarchiveBtn.addEventListener("click", () => {
+      void queueAction(
+        `/api/projects/${encodeURIComponent(projectId)}/webarchive-task`,
+        "Задача WebArchive поставлена в очередь",
+        {},
+      );
+    });
+
     runIntelxBtn.addEventListener("click", () => {
       const body = buildIntelxTaskBody();
       void queueAction(
@@ -2224,6 +2774,22 @@
       activeDataTab = "whois";
       renderDataTab();
       void refreshWhoisInfo();
+    });
+
+    tabWebarchiveBtn.addEventListener("click", () => {
+      activeDataTab = "webarchive";
+      renderDataTab();
+      if (!webarchiveData) {
+        void refreshWebArchiveInfo();
+      }
+    });
+
+    tabEmailsBtn.addEventListener("click", () => {
+      activeDataTab = "emails";
+      renderDataTab();
+      if (!emailData) {
+        void refreshEmailsInfo();
+      }
     });
 
     tabVtDeepBtn.addEventListener("click", () => {
@@ -2248,6 +2814,138 @@
         "Задача VT Deep поставлена в очередь",
         {},
       );
+    });
+
+    webarchiveLoadBtn.addEventListener("click", () => {
+      void queueAction(
+        `/api/projects/${encodeURIComponent(projectId)}/webarchive-task`,
+        "Задача WebArchive поставлена в очередь",
+        {},
+      );
+    });
+
+    webarchiveRefreshMetadataBtn.addEventListener("click", () => {
+      void queueAction(
+        `/api/projects/${encodeURIComponent(projectId)}/webarchive-metadata-task`,
+        "Переизвлечение метаданных WebArchive поставлено в очередь",
+        {},
+      );
+    });
+
+    emailsRefreshBtn.addEventListener("click", () => {
+      void refreshEmailsInfo();
+    });
+
+    emailsAddBtn.addEventListener("click", async () => {
+      const email = window.prompt("Новый email для УЗ");
+      if (email === null) {
+        return;
+      }
+      emailsAddBtn.disabled = true;
+      setEmailsMessage("", "");
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/emails`, {
+          method: "POST",
+          body: { email },
+        });
+        emailData = payload && payload.result ? payload.result : emailData;
+        renderEmails();
+        setEmailsMessage("УЗ добавлена", "success");
+      } catch (error) {
+        setEmailsMessage(friendlyError(error, "Не удалось добавить УЗ"), "error");
+      } finally {
+        emailsAddBtn.disabled = false;
+      }
+    });
+
+    emailsDeleteSelectedBtn.addEventListener("click", async () => {
+      if (!selectedEmailSourceKeys.size) {
+        return;
+      }
+      const confirmed = window.confirm(`Удалить выбранные emails: ${selectedEmailSourceKeys.size}?`);
+      if (!confirmed) {
+        return;
+      }
+      emailsDeleteSelectedBtn.disabled = true;
+      setEmailsMessage("", "");
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/emails/delete`, {
+          method: "POST",
+          body: { sourceKeys: Array.from(selectedEmailSourceKeys) },
+        });
+        selectedEmailSourceKeys.clear();
+        emailData = payload && payload.result ? payload.result : emailData;
+        renderEmails();
+        setEmailsMessage("Выбранные УЗ удалены", "success");
+      } catch (error) {
+        setEmailsMessage(friendlyError(error, "Не удалось удалить УЗ"), "error");
+      } finally {
+        emailsDeleteSelectedBtn.disabled = false;
+      }
+    });
+
+    emailsEditSelectedBtn.addEventListener("click", async () => {
+      if (selectedEmailSourceKeys.size !== 1) {
+        return;
+      }
+      const sourceKey = Array.from(selectedEmailSourceKeys)[0];
+      const current = Array.isArray(emailData?.emails)
+        ? emailData.emails.find((item) => String(item.sourceKey || "") === String(sourceKey))
+        : null;
+      const nextEmail = window.prompt("Изменить email УЗ", current?.email || "");
+      if (nextEmail === null) {
+        return;
+      }
+      emailsEditSelectedBtn.disabled = true;
+      setEmailsMessage("", "");
+      try {
+        const payload = await api(
+          `/api/projects/${encodeURIComponent(projectId)}/emails/${encodeURIComponent(sourceKey)}`,
+          { method: "PUT", body: { email: nextEmail } },
+        );
+        emailData = payload && payload.result ? payload.result : emailData;
+        renderEmails();
+        setEmailsMessage("УЗ обновлена", "success");
+      } catch (error) {
+        setEmailsMessage(friendlyError(error, "Не удалось изменить УЗ"), "error");
+      } finally {
+        emailsEditSelectedBtn.disabled = false;
+      }
+    });
+
+    emailsExportCsvBtn.addEventListener("click", () => {
+      const rows = Array.isArray(emailData?.emails) ? emailData.emails : [];
+      if (!rows.length) {
+        setEmailsMessage("Нет данных УЗ для экспорта", "error");
+        return;
+      }
+
+      const csvRows = [
+        ["email", "sources", "intelx_terms", "webarchive_hosts", "webarchive_authors", "webarchive_editors", "webarchive_titles", "webarchive_companies", "intelx_snippets", "whois"].join(";"),
+        ...rows.map((item) =>
+          [
+            item.email || "",
+            Array.isArray(item.sources) ? item.sources.join(",") : "",
+            Array.isArray(item.intelxTerms) ? item.intelxTerms.join(",") : "",
+            Array.isArray(item.webarchiveHosts) ? item.webarchiveHosts.join(",") : "",
+            Array.isArray(item.webarchiveAuthors) ? item.webarchiveAuthors.join(",") : "",
+            Array.isArray(item.webarchiveEditors) ? item.webarchiveEditors.join(",") : "",
+            Array.isArray(item.webarchiveTitles) ? item.webarchiveTitles.join(",") : "",
+            Array.isArray(item.webarchiveCompanies) ? item.webarchiveCompanies.join(",") : "",
+            Array.isArray(item.intelxSnippets) ? item.intelxSnippets.join(" | ") : "",
+            item.whois ? "1" : "0",
+          ]
+            .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+            .join(";"),
+        ),
+      ];
+
+      downloadTextFile(
+        `${projectId}-accounts.csv`,
+        `\uFEFF${csvRows.join("\n")}\n`,
+        "text/csv;charset=utf-8",
+      );
+      setEmailsMessage("УЗ экспортированы в CSV", "success");
     });
 
     intelxLoadBtn.addEventListener("click", () => {
@@ -2524,6 +3222,8 @@
     renderRuns(true);
     renderSubdomains();
     renderVtDeep();
+    renderWebArchive();
+    renderEmails();
     renderIntelx();
     renderDataTab();
     void refreshSubdomains(true).catch((error) => {

@@ -4,6 +4,7 @@ const { executeDnsResolve } = require("./dns-resolve");
 const { executeWhoisTask } = require("./whois-task");
 const { executeVtDeepTask } = require("./vt-deep-task");
 const { executeIntelxLeaksTask } = require("./intelx-task");
+const { executeWebArchiveTask, executeWebArchiveMetadataTask } = require("./webarchive-task");
 const { clampProgress, createId, nowIso } = require("./utils");
 
 class RunDeletedError extends Error {
@@ -168,6 +169,10 @@ async function executeRun(payload, onQueueProgress) {
       await executeWhoisTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "VT_DEEP") {
       await executeVtDeepTask(payload.projectId, progressReporter);
+    } else if (payload.taskKind === "WEBARCHIVE") {
+      await executeWebArchiveTask(payload.projectId, progressReporter);
+    } else if (payload.taskKind === "WEBARCHIVE_METADATA") {
+      await executeWebArchiveMetadataTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "INTELX_LEAKS") {
       await executeIntelxLeaksTask(payload.projectId, progressReporter, payload.taskPayload || null);
     } else if (payload.type === "PASSIVE_SCAN") {

@@ -453,6 +453,292 @@ function saveCachedIntelxLeaks(projectId, result) {
   `).run(projectId, JSON.stringify(result || {}), "intelx", now, now);
 }
 
+function getCachedWebArchive(projectId) {
+  const { db } = getDbState();
+  const row = db
+    .prepare("SELECT data_json, source, updated_at FROM project_webarchive WHERE project_id = ? LIMIT 1")
+    .get(projectId);
+  if (!row || !row.data_json) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(row.data_json);
+    return {
+      ...data,
+      source: row.source || data.source || "waybackarchive",
+      cachedAt: row.updated_at || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractEmailsFromText(text) {
+  const matches = String(text || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  return Array.from(new Set((matches || []).map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)));
+}
+
+function normalizeEmailValue(rawEmail) {
+  return String(rawEmail || "").trim().toLowerCase();
+}
+
+function isValidEmailValue(rawEmail) {
+  const email = normalizeEmailValue(rawEmail);
+  return /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24}$/.test(email);
+}
+
+function listProjectEmailOverrides(projectId) {
+  const { db } = getDbState();
+  return db.prepare(`
+    SELECT id, source_email, email, is_deleted, is_manual, created_at, updated_at
+    FROM project_email_overrides
+    WHERE project_id = ?
+    ORDER BY created_at ASC
+  `).all(projectId);
+}
+
+function collectProjectEmails(projectId) {
+  const intelx = getCachedIntelxLeaks(projectId);
+  const webarchive = getCachedWebArchive(projectId);
+  const whois = getCachedWhois(projectId);
+  const emailMap = new Map();
+  const authorMap = new Map();
+  const editorMap = new Map();
+
+  function touchEmail(email) {
+    const normalized = String(email || "").trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (!emailMap.has(normalized)) {
+      emailMap.set(normalized, {
+        email: normalized,
+        sources: new Set(),
+        intelxTerms: new Set(),
+        intelxSnippets: new Set(),
+        webarchiveHosts: new Set(),
+        webarchiveAuthors: new Set(),
+        webarchiveEditors: new Set(),
+        webarchiveTitles: new Set(),
+        webarchiveCompanies: new Set(),
+        whois: false,
+      });
+    }
+    return emailMap.get(normalized);
+  }
+
+  function touchNamedEntity(map, rawName, document) {
+    const name = String(rawName || "").trim();
+    if (!name) {
+      return null;
+    }
+    const key = name.toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, {
+        name,
+        sources: new Set(),
+        hosts: new Set(),
+        titles: new Set(),
+        companies: new Set(),
+        urls: new Set(),
+        documentTypes: new Set(),
+      });
+    }
+    const entry = map.get(key);
+    entry.sources.add("webarchive");
+    if (document?.host) {
+      entry.hosts.add(String(document.host));
+    }
+    if (document?.metadata?.title) {
+      entry.titles.add(String(document.metadata.title));
+    }
+    if (document?.metadata?.company) {
+      entry.companies.add(String(document.metadata.company));
+    }
+    if (document?.url) {
+      entry.urls.add(String(document.url));
+    }
+    if (document?.type) {
+      entry.documentTypes.add(String(document.type));
+    }
+    return entry;
+  }
+
+  if (intelx && Array.isArray(intelx.searches)) {
+    for (const search of intelx.searches) {
+      const term = String(search?.term || "").trim();
+      const hits = Array.isArray(search?.hits) ? search.hits : [];
+      for (const hit of hits) {
+        const line = String(hit?.line || "").trim();
+        for (const email of extractEmailsFromText(line)) {
+          const entry = touchEmail(email);
+          if (!entry) {
+            continue;
+          }
+          entry.sources.add("intelx");
+          if (term) {
+            entry.intelxTerms.add(term);
+          }
+          if (line) {
+            entry.intelxSnippets.add(line);
+          }
+        }
+      }
+    }
+  }
+
+  if (webarchive && Array.isArray(webarchive.documents)) {
+    for (const document of webarchive.documents) {
+      const host = String(document?.host || "").trim().toLowerCase();
+      const emails = Array.isArray(document?.metadata?.emails) ? document.metadata.emails : [];
+      if (document?.metadata?.author) {
+        touchNamedEntity(authorMap, document.metadata.author, document);
+      }
+      if (document?.metadata?.lastModifiedBy) {
+        touchNamedEntity(editorMap, document.metadata.lastModifiedBy, document);
+      }
+      for (const email of emails) {
+        const entry = touchEmail(email);
+        if (!entry) {
+          continue;
+        }
+        entry.sources.add("webarchive");
+        if (host) {
+          entry.webarchiveHosts.add(host);
+        }
+        if (document?.metadata?.author) {
+          entry.webarchiveAuthors.add(String(document.metadata.author));
+        }
+        if (document?.metadata?.lastModifiedBy) {
+          entry.webarchiveEditors.add(String(document.metadata.lastModifiedBy));
+        }
+        if (document?.metadata?.title) {
+          entry.webarchiveTitles.add(String(document.metadata.title));
+        }
+        if (document?.metadata?.company) {
+          entry.webarchiveCompanies.add(String(document.metadata.company));
+        }
+      }
+    }
+  }
+
+  if (whois && Array.isArray(whois.emails)) {
+    for (const email of whois.emails) {
+      const entry = touchEmail(email);
+      if (!entry) {
+        continue;
+      }
+      entry.sources.add("whois");
+      entry.whois = true;
+    }
+  }
+
+  const emails = Array.from(emailMap.values())
+    .map((item) => ({
+      sourceKey: item.email,
+      email: item.email,
+      sources: Array.from(item.sources).sort(),
+      intelxTerms: Array.from(item.intelxTerms).sort(),
+      intelxSnippets: Array.from(item.intelxSnippets).slice(0, 5),
+      webarchiveHosts: Array.from(item.webarchiveHosts).sort(),
+      webarchiveAuthors: Array.from(item.webarchiveAuthors).sort(),
+      webarchiveEditors: Array.from(item.webarchiveEditors).sort(),
+      webarchiveTitles: Array.from(item.webarchiveTitles).sort(),
+      webarchiveCompanies: Array.from(item.webarchiveCompanies).sort(),
+      whois: item.whois,
+      isManual: false,
+    }))
+    .sort((left, right) => left.email.localeCompare(right.email));
+
+  const bySourceKey = new Map(emails.map((item) => [item.sourceKey, item]));
+  const overrides = listProjectEmailOverrides(projectId);
+
+  for (const row of overrides) {
+    const sourceKey = String(row.source_email || "").trim();
+    const overrideEmail = normalizeEmailValue(row.email);
+    const isDeleted = Boolean(row.is_deleted);
+    const isManual = Boolean(row.is_manual);
+    if (!sourceKey) {
+      continue;
+    }
+
+    if (isManual) {
+      if (!isDeleted && overrideEmail) {
+        emails.push({
+          sourceKey,
+          email: overrideEmail,
+          sources: ["manual"],
+          intelxTerms: [],
+          intelxSnippets: [],
+          webarchiveHosts: [],
+          webarchiveAuthors: [],
+          webarchiveEditors: [],
+          webarchiveTitles: [],
+          webarchiveCompanies: [],
+          whois: false,
+          isManual: true,
+        });
+      }
+      continue;
+    }
+
+    const existing = bySourceKey.get(sourceKey);
+    if (!existing) {
+      continue;
+    }
+    if (isDeleted) {
+      bySourceKey.delete(sourceKey);
+      continue;
+    }
+    if (overrideEmail) {
+      existing.email = overrideEmail;
+    }
+  }
+
+  const mergedEmails = Array.from(bySourceKey.values())
+    .concat(emails.filter((item) => item.isManual))
+    .sort((left, right) => left.email.localeCompare(right.email));
+
+  const authors = Array.from(authorMap.values())
+    .map((item) => ({
+      name: item.name,
+      sources: Array.from(item.sources).sort(),
+      hosts: Array.from(item.hosts).sort(),
+      titles: Array.from(item.titles).sort(),
+      companies: Array.from(item.companies).sort(),
+      urls: Array.from(item.urls).slice(0, 10),
+      documentTypes: Array.from(item.documentTypes).sort(),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  const editors = Array.from(editorMap.values())
+    .map((item) => ({
+      name: item.name,
+      sources: Array.from(item.sources).sort(),
+      hosts: Array.from(item.hosts).sort(),
+      titles: Array.from(item.titles).sort(),
+      companies: Array.from(item.companies).sort(),
+      urls: Array.from(item.urls).slice(0, 10),
+      documentTypes: Array.from(item.documentTypes).sort(),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return {
+    summary: {
+      total: mergedEmails.length,
+      intelx: mergedEmails.filter((item) => item.sources.includes("intelx")).length,
+      webarchive: mergedEmails.filter((item) => item.sources.includes("webarchive")).length,
+      whois: mergedEmails.filter((item) => item.sources.includes("whois")).length,
+      authors: authors.length,
+      editors: editors.length,
+    },
+    emails: mergedEmails,
+    authors,
+    editors,
+    loadedAt: nowIso(),
+  };
+}
+
 function fetchRunEvents(runId, limit = 30) {
   const { db } = getDbState();
   return db
@@ -880,6 +1166,8 @@ router.get("/:id", requireApiUser(), (req, res) => {
 
   const whois = getCachedWhois(id);
   const intelx = getCachedIntelxLeaks(id);
+  const webarchive = getCachedWebArchive(id);
+  const emails = collectProjectEmails(id);
 
   res.json({
     project: mapProjectWithDomains(project, {
@@ -887,6 +1175,8 @@ router.get("/:id", requireApiUser(), (req, res) => {
       runs,
       whois,
       intelx,
+      webarchive,
+      emails,
     }),
   });
 });
@@ -947,6 +1237,7 @@ router.post("/:id/domains", requireApiUser(), (req, res) => {
       },
       runs: [],
       whois: getCachedWhois(id),
+      webarchive: getCachedWebArchive(id),
     }),
   });
 });
@@ -1481,6 +1772,142 @@ router.get("/:id/intelx-leaks", requireApiUser(), async (req, res) => {
   });
 });
 
+router.get("/:id/webarchive", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const cached = getCachedWebArchive(project.id);
+  if (cached) {
+    res.json({ result: cached, cached: true });
+    return;
+  }
+
+  res.json({
+    result: null,
+    cached: false,
+    message: "No WebArchive data yet. Start the WebArchive task to collect and save results.",
+  });
+});
+
+router.get("/:id/emails", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  res.json({
+    result: collectProjectEmails(id),
+    cached: true,
+  });
+});
+
+router.post("/:id/emails", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const email = normalizeEmailValue(req.body?.email);
+  if (!isValidEmailValue(email)) {
+    res.status(400).json({ error: "Invalid email" });
+    return;
+  }
+
+  const now = nowIso();
+  const sourceKey = `manual:${createId()}`;
+  db.prepare(`
+    INSERT INTO project_email_overrides (
+      id, project_id, source_email, email, is_deleted, is_manual, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 0, 1, ?, ?)
+  `).run(createId(), id, sourceKey, email, now, now);
+
+  res.json({ ok: true, result: collectProjectEmails(id) });
+});
+
+router.put("/:id/emails/:sourceKey", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id, sourceKey } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const normalizedSourceKey = String(sourceKey || "").trim();
+  const email = normalizeEmailValue(req.body?.email);
+  if (!normalizedSourceKey) {
+    res.status(400).json({ error: "Missing source key" });
+    return;
+  }
+  if (!isValidEmailValue(email)) {
+    res.status(400).json({ error: "Invalid email" });
+    return;
+  }
+
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO project_email_overrides (
+      id, project_id, source_email, email, is_deleted, is_manual, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+    ON CONFLICT(project_id, source_email)
+    DO UPDATE SET
+      email = excluded.email,
+      is_deleted = 0,
+      updated_at = excluded.updated_at
+  `).run(createId(), id, normalizedSourceKey, email, normalizedSourceKey.startsWith("manual:") ? 1 : 0, now, now);
+
+  res.json({ ok: true, result: collectProjectEmails(id) });
+});
+
+router.post("/:id/emails/delete", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rawSourceKeys = Array.isArray(req.body?.sourceKeys) ? req.body.sourceKeys : [];
+  const sourceKeys = Array.from(new Set(rawSourceKeys.map((item) => String(item || "").trim()).filter(Boolean)));
+  if (!sourceKeys.length) {
+    res.status(400).json({ error: "No emails selected" });
+    return;
+  }
+
+  const now = nowIso();
+  const upsert = db.prepare(`
+    INSERT INTO project_email_overrides (
+      id, project_id, source_email, email, is_deleted, is_manual, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    ON CONFLICT(project_id, source_email)
+    DO UPDATE SET
+      is_deleted = 1,
+      updated_at = excluded.updated_at
+  `);
+
+  const tx = db.transaction(() => {
+    for (const sourceKey of sourceKeys) {
+      const isManual = sourceKey.startsWith("manual:");
+      upsert.run(createId(), id, sourceKey, sourceKey, isManual ? 1 : 0, now, now);
+    }
+  });
+  tx();
+
+  res.json({ ok: true, deleted: sourceKeys.length, result: collectProjectEmails(id) });
+});
+
 router.post("/:id/vt-deep-task", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
@@ -1526,6 +1953,52 @@ router.post("/:id/intelx-task", requireApiUser(), (req, res) => {
     taskPayload,
   });
   res.json({ ok: true, runId: run.id, taskKind: "INTELX_LEAKS", customQuery: customQuery || null });
+});
+
+router.post("/:id/webarchive-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", {
+    scanScope: "core",
+    taskKind: "WEBARCHIVE",
+  });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "WEBARCHIVE",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "WEBARCHIVE" });
+});
+
+router.post("/:id/webarchive-metadata-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", {
+    scanScope: "core",
+    taskKind: "WEBARCHIVE_METADATA",
+  });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "WEBARCHIVE_METADATA",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "WEBARCHIVE_METADATA" });
 });
 
 router.post("/:id/whois-task", requireApiUser(), (req, res) => {

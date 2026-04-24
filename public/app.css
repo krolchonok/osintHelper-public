@@ -1137,6 +1137,7 @@ body.ui-mode-effects .project-card {
 }
 
 #subdomains-panel .text-input,
+#webarchive-panel .text-input,
 #vtdeep-panel .text-input,
 #whois-info-field {
   background: rgba(9, 18, 24, 0.86);
@@ -1144,6 +1145,42 @@ body.ui-mode-effects .project-card {
 
 #whois-info-field {
   min-height: 190px;
+}
+
+.data-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.data-stat-card {
+  border-radius: 14px;
+  border: 1px solid rgba(131, 166, 186, 0.28);
+  background: linear-gradient(148deg, rgba(18, 33, 43, 0.88), rgba(12, 23, 31, 0.76));
+  padding: 14px;
+  box-shadow: inset 0 0 0 1px rgba(44, 81, 102, 0.12);
+}
+
+.data-stat-value {
+  font-size: 1.22rem;
+  color: #eef8ff;
+}
+
+.data-stat-label {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.webarchive-metadata-cell {
+  min-width: 320px;
+  max-width: 520px;
+  white-space: normal;
+  word-break: break-word;
+  color: var(--text-faint);
+  font-size: 0.84rem;
 }
 
 @keyframes card-enter {

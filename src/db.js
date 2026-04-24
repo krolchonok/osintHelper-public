@@ -180,6 +180,30 @@ function initSchema(db) {
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS project_webarchive (
+      project_id TEXT PRIMARY KEY,
+      data_json TEXT NOT NULL,
+      source TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS project_email_overrides (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      source_email TEXT NOT NULL,
+      email TEXT NOT NULL,
+      is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)),
+      is_manual INTEGER NOT NULL DEFAULT 0 CHECK(is_manual IN (0, 1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(project_id, source_email),
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_email_overrides_project
+      ON project_email_overrides(project_id, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS scan_jobs (
       run_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
