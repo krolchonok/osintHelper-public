@@ -56,7 +56,12 @@ async function executeIntelxLeaksTask(projectId, onProgress, options = null) {
     const result = await client.searchLeaks(term);
     searches.push({
       term,
-      hits: result.hits.map((line) => ({ line })),
+      hits: result.hits.map((hit) => ({
+        line: String(hit?.line || ""),
+        storageid: String(hit?.storageid || ""),
+        bucket: String(hit?.bucket || ""),
+        fileName: String(hit?.fileName || ""),
+      })),
       count: result.hits.length,
       warnings: result.warnings,
     });

@@ -1,9 +1,24 @@
 (function () {
   const appEl = document.getElementById("app");
   const navEl = document.getElementById("topbar-nav");
-  const UI_MODE_STORAGE_KEY = "ui-mode";
-  const UI_MODE_EFFECTS = "effects";
-  const UI_MODE_LITE = "lite";
+  const UI_SETTINGS_KEY = "ui-settings-v2";
+
+  function readInitialUi() {
+    const defaultSettings = { theme: 'dark', effects: false };
+    try {
+      const stored = window.localStorage.getItem(UI_SETTINGS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return {
+          theme: (parsed.theme === 'dark' || parsed.theme === 'bright') ? parsed.theme : 'dark',
+          effects: typeof parsed.effects === 'boolean' ? parsed.effects : true
+        };
+      }
+    } catch (e) {
+      // ignore
+    }
+    return defaultSettings;
+  }
 
   const state = {
     user: null,
@@ -11,12 +26,13 @@
     projectSearch: "",
     projectsFilterRenderer: null,
     projectSearchDebounceTimer: null,
-    uiMode: readInitialUiMode(),
+    ui: readInitialUi(),
   };
 
   const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
   const SUBDOMAINS_PAGE_SIZES = [100, 250, 500];
   const DEFAULT_SUBDOMAINS_PAGE_SIZE = SUBDOMAINS_PAGE_SIZES[0];
+  const DEBOUNCE_FAST_MS = 120;
   const ICON_EDIT = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M12 20h9"></path>
@@ -44,6 +60,24 @@
       <path d="M9.9 4.24A10.946 10.946 0 0 1 12 4c7 0 11 8 11 8a21.79 21.79 0 0 1-3.06 4.24"></path>
       <path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"></path>
       <line x1="1" y1="1" x2="23" y2="23"></line>
+    </svg>
+  `;
+  const ICON_SUN = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  `;
+  const ICON_MOON = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
     </svg>
   `;
 
@@ -99,63 +133,84 @@
     return new Date(time).toLocaleTimeString();
   }
 
-  function readInitialUiMode() {
-    try {
-      const value = String(window.localStorage.getItem(UI_MODE_STORAGE_KEY) || "")
-        .trim()
-        .toLowerCase();
-      if (value === UI_MODE_LITE || value === UI_MODE_EFFECTS) {
-        return value;
-      }
-    } catch {
-      // ignore storage read failures
-    }
-    return UI_MODE_LITE;
+  function closestAction(target, action) {
+    return target && typeof target.closest === "function"
+      ? target.closest(`[data-action='${action}']`)
+      : null;
   }
 
-  function getUiModeToggleLabel(mode = state.uiMode) {
-    return mode === UI_MODE_LITE ? "Легкий режим" : "Режим с эффектами";
-  }
+  function applyUi(options = {}) {
+    const { theme, effects } = state.ui;
 
-  function getUiModeToggleIcon(mode = state.uiMode) {
-    return mode === UI_MODE_LITE ? ICON_EYE_OFF : ICON_EYE;
-  }
-
-  function buildUiModeToggleButton() {
-    const label = getUiModeToggleLabel();
-    return `<button type="button" id="ui-mode-toggle-btn" class="ui-mode-toggle" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-pressed="${state.uiMode === UI_MODE_EFFECTS ? "true" : "false"}">${getUiModeToggleIcon()}<span class="visually-hidden">${escapeHtml(label)}</span></button>`;
-  }
-
-  function applyUiMode(mode, options = {}) {
-    const normalized = mode === UI_MODE_LITE ? UI_MODE_LITE : UI_MODE_EFFECTS;
-    state.uiMode = normalized;
-
-    document.body.classList.toggle("ui-mode-lite", normalized === UI_MODE_LITE);
-    document.body.classList.toggle("ui-mode-effects", normalized === UI_MODE_EFFECTS);
+    document.body.classList.toggle("ui-theme-dark", theme === "dark");
+    document.body.classList.toggle("ui-theme-bright", theme === "bright");
+    document.body.classList.toggle("ui-effects-enabled", effects);
+    document.body.classList.toggle("ui-effects-disabled", !effects);
 
     if (!options.skipPersist) {
       try {
-        window.localStorage.setItem(UI_MODE_STORAGE_KEY, normalized);
-      } catch {
-        // ignore storage write failures
+        window.localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify(state.ui));
+      } catch (e) {
+        // ignore
       }
     }
 
-    const toggleButton = document.getElementById("ui-mode-toggle-btn");
-    if (toggleButton) {
-      const label = getUiModeToggleLabel(normalized);
-      toggleButton.innerHTML = `${getUiModeToggleIcon(normalized)}<span class="visually-hidden">${escapeHtml(label)}</span>`;
-      toggleButton.setAttribute("aria-label", label);
-      toggleButton.setAttribute("title", label);
-      toggleButton.setAttribute("aria-pressed", normalized === UI_MODE_EFFECTS ? "true" : "false");
+    const themeBtn = document.getElementById("ui-theme-toggle-btn");
+    if (themeBtn) {
+      themeBtn.innerHTML = theme === "dark" ? ICON_SUN : ICON_MOON;
+      const label = theme === "dark" ? "Переключить на светлую тему" : "Переключить на темную тему";
+      themeBtn.setAttribute("aria-label", label);
+      themeBtn.setAttribute("title", label);
+    }
+
+    const effectsBtn = document.getElementById("ui-effects-toggle-btn");
+    if (effectsBtn) {
+      effectsBtn.innerHTML = effects ? ICON_EYE_OFF : ICON_EYE;
+      const label = effects ? "Выключить эффекты" : "Включить эффекты";
+      effectsBtn.setAttribute("aria-label", label);
+      effectsBtn.setAttribute("title", label);
+      effectsBtn.setAttribute("aria-pressed", effects ? "true" : "false");
     }
 
     if (options.notify) {
-      showPopup(
-        normalized === UI_MODE_LITE ? "Включен легкий режим" : "Включен режим с эффектами",
-        "info",
-        { timeoutMs: 2200 },
-      );
+      const themeLabel = theme === "dark" ? "Темная тема" : "Светлая тема";
+      const effectsLabel = effects ? "эффекты включены" : "эффекты выключены";
+      showPopup(`${themeLabel}, ${effectsLabel}`, "info", { timeoutMs: 2200 });
+    }
+  }
+
+  function toggleTheme() {
+    state.ui.theme = state.ui.theme === "dark" ? "bright" : "dark";
+    applyUi({ notify: true });
+  }
+
+  function toggleEffects() {
+    state.ui.effects = !state.ui.effects;
+    applyUi({ notify: true });
+  }
+
+  function buildThemeToggleButton() {
+    const theme = state.ui.theme;
+    const label = theme === "dark" ? "Переключить на светлую тему" : "Переключить на темную тему";
+    const icon = theme === "dark" ? ICON_SUN : ICON_MOON;
+    return `<button type="button" id="ui-theme-toggle-btn" class="ui-mode-toggle" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${icon}<span class="visually-hidden">${escapeHtml(label)}</span></button>`;
+  }
+
+  function buildEffectsToggleButton() {
+    const effects = state.ui.effects;
+    const label = effects ? "Выключить эффекты" : "Включить эффекты";
+    const icon = effects ? ICON_EYE_OFF : ICON_EYE;
+    return `<button type="button" id="ui-effects-toggle-btn" class="ui-mode-toggle" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-pressed="${effects ? "true" : "false"}">${icon}<span class="visually-hidden">${escapeHtml(label)}</span></button>`;
+  }
+
+  function setupTopbarUiListeners() {
+    const themeBtn = document.getElementById("ui-theme-toggle-btn");
+    if (themeBtn) {
+      themeBtn.addEventListener("click", toggleTheme);
+    }
+    const effectsBtn = document.getElementById("ui-effects-toggle-btn");
+    if (effectsBtn) {
+      effectsBtn.addEventListener("click", toggleEffects);
     }
   }
 
@@ -235,6 +290,22 @@
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function csvCell(value) {
+    return `"${String(value ?? "").replace(/"/g, '""')}"`;
+  }
+
+  function csvList(value) {
+    return Array.isArray(value) ? value.filter((item) => item !== null && item !== undefined && item !== "").join(", ") : "";
+  }
+
+  function downloadCsvFile(filename, headers, rows) {
+    const csvRows = [
+      headers.map(csvCell).join(";"),
+      ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(";")),
+    ];
+    downloadTextFile(filename, `\uFEFF${csvRows.join("\n")}\n`, "text/csv;charset=utf-8");
   }
 
   function friendlyError(error, fallback) {
@@ -458,16 +529,12 @@
       state.projectSearchDebounceTimer = null;
     }
 
-    const uiModeButton = buildUiModeToggleButton();
+    const themeBtnMarkup = buildThemeToggleButton();
+    const effectsBtnMarkup = buildEffectsToggleButton();
 
     if (!state.user) {
-      navEl.innerHTML = [uiModeButton, '<a href="/login" data-link>Вход</a>'].join("");
-      const toggleButton = document.getElementById("ui-mode-toggle-btn");
-      if (toggleButton) {
-        toggleButton.addEventListener("click", () => {
-          applyUiMode(state.uiMode === UI_MODE_LITE ? UI_MODE_EFFECTS : UI_MODE_LITE, { notify: true });
-        });
-      }
+      navEl.innerHTML = [themeBtnMarkup, effectsBtnMarkup, '<a href="/login" data-link>Вход</a>'].join("");
+      setupTopbarUiListeners();
       return;
     }
 
@@ -478,7 +545,8 @@
         : "";
 
     navEl.innerHTML = [
-      uiModeButton,
+      themeBtnMarkup,
+      effectsBtnMarkup,
       '<a href="/" data-link>Проекты</a>',
       adminLinks,
       `<input id="topbar-search" class="text-input topbar-search" type="search" placeholder="Поиск проектов..." aria-label="Поиск проектов" value="${searchValue}" />`,
@@ -487,12 +555,7 @@
       '<button type="button" id="logout-btn">Выход</button>',
     ].join("");
 
-    const toggleButton = document.getElementById("ui-mode-toggle-btn");
-    if (toggleButton) {
-      toggleButton.addEventListener("click", () => {
-        applyUiMode(state.uiMode === UI_MODE_LITE ? UI_MODE_EFFECTS : UI_MODE_LITE, { notify: true });
-      });
-    }
+    setupTopbarUiListeners();
 
     const logoutButton = document.getElementById("logout-btn");
     if (logoutButton) {
@@ -900,6 +963,8 @@
               ? "VT_DEEP"
               : run.taskKind === "WEBARCHIVE"
                 ? "WEBARCHIVE"
+              : run.taskKind === "DORK_STATS"
+                ? "DORK_STATS"
               : run.taskKind === "INTELX_LEAKS"
                 ? "INTELX_LEAKS"
               : run.taskKind === "DNS_RESOLVE_SELECTED"
@@ -909,6 +974,7 @@
           run.taskKind === "WHOIS" ||
           run.taskKind === "VT_DEEP" ||
           run.taskKind === "WEBARCHIVE" ||
+          run.taskKind === "DORK_STATS" ||
           run.taskKind === "INTELX_LEAKS" ||
           run.taskKind === "DNS_RESOLVE_SELECTED"
             ? "-"
@@ -1072,9 +1138,9 @@
 
     if (!subdomains.length) {
       return `
-        <div class="row wrap">
+        <div class="row wrap subdomains-table-toolbar">
           <span class="hint">Показано ${start}-${end} из ${total}</span>
-          <label class="hint">На странице
+          <label class="hint subdomains-page-size-label">На странице
             <select class="text-input mono" data-action="subdomains-page-size">${pageSizeOptions}</select>
           </label>
           <button class="btn btn-ghost" data-action="subdomains-prev-page" ${currentPage <= 1 ? "disabled" : ""}>Назад</button>
@@ -1148,9 +1214,9 @@
       .join("");
 
     return `
-      <div class="row wrap">
+      <div class="row wrap subdomains-table-toolbar">
         <span class="hint">Показано ${start}-${end} из ${total}</span>
-        <label class="hint">На странице
+        <label class="hint subdomains-page-size-label">На странице
           <select class="text-input mono" data-action="subdomains-page-size">${pageSizeOptions}</select>
         </label>
         <button class="btn btn-ghost" data-action="subdomains-prev-page" ${currentPage <= 1 ? "disabled" : ""}>Назад</button>
@@ -1231,7 +1297,7 @@
     `;
   }
 
-  function buildIntelxTable(intelxData) {
+  function buildIntelxTable(intelxData, projectId = "", selectedHitKeys = new Set()) {
     if (!intelxData) {
       return '<p class="hint">Данные IntelX еще не загружены. Запустите задачу IntelX, чтобы сохранить результаты в проект.</p>';
     }
@@ -1242,25 +1308,72 @@
     }
 
     const sections = searches
-      .map((entry) => {
+      .map((entry, searchIndex) => {
         const hits = Array.isArray(entry.hits) ? entry.hits : [];
         const rows = hits.length
           ? hits
               .map(
-                (hit) => `
+                (hit, hitIndex) => {
+                  const hitKey = `${searchIndex}:${hitIndex}`;
+                  const storageid = String(hit.storageid || "").trim();
+                  const bucket = String(hit.bucket || "leaks.public.general").trim() || "leaks.public.general";
+                  const fileUrl = storageid
+                    ? `/api/projects/${encodeURIComponent(projectId || "")}/intelx-file?storageid=${encodeURIComponent(storageid)}&bucket=${encodeURIComponent(bucket)}`
+                    : "";
+                  const fileName = formatIntelxFileName(hit);
+                  const fileLink = fileUrl
+                    ? `<a href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(fileName)}</a>`
+                    : escapeHtml(fileName);
+                  return `
                   <tr>
+                    <td>
+                      <input
+                        type="checkbox"
+                        data-action="toggle-intelx-hit-select"
+                        data-hit-key="${escapeHtml(hitKey)}"
+                        ${selectedHitKeys.has(hitKey) ? "checked" : ""}
+                      />
+                    </td>
                     <td class="mono">${escapeHtml(entry.term || "-")}</td>
-                    <td class="mono">${escapeHtml(hit.line || "-")}</td>
+                    <td>
+                      <div class="intelx-hit-file">${fileLink}</div>
+                      <div class="intelx-hit-line mono">${escapeHtml(hit.line || "-")}</div>
+                    </td>
+                    <td>
+                      <div class="subdomain-actions">
+                        <button
+                          class="btn btn-ghost btn-icon"
+                          data-action="edit-intelx-hit"
+                          data-hit-key="${escapeHtml(hitKey)}"
+                          aria-label="Изменить IntelX строку"
+                          title="Изменить"
+                          type="button"
+                        >${ICON_EDIT}</button>
+                        <button
+                          class="btn btn-danger btn-icon"
+                          data-action="delete-intelx-hit"
+                          data-hit-key="${escapeHtml(hitKey)}"
+                          aria-label="Удалить IntelX строку"
+                          title="Удалить"
+                          type="button"
+                        >${ICON_DELETE}</button>
+                      </div>
+                    </td>
                   </tr>
-                `,
+                `;
+                },
               )
               .join("")
           : `
             <tr>
+              <td></td>
               <td class="mono">${escapeHtml(entry.term || "-")}</td>
               <td>Совпадений не найдено</td>
+              <td></td>
             </tr>
           `;
+        const visibleHitKeys = hits.map((_hit, hitIndex) => `${searchIndex}:${hitIndex}`);
+        const allVisibleSelected = visibleHitKeys.length > 0 && visibleHitKeys.every((key) => selectedHitKeys.has(key));
 
         return `
           <div class="stack-md">
@@ -1272,8 +1385,18 @@
               <table class="table">
                 <thead>
                   <tr>
+                    <th>
+                      <input
+                        type="checkbox"
+                        data-action="intelx-select-search"
+                        data-search-index="${searchIndex}"
+                        ${allVisibleSelected ? "checked" : ""}
+                        ${visibleHitKeys.length ? "" : "disabled"}
+                      />
+                    </th>
                     <th>Терм</th>
-                    <th>Совпадение</th>
+                    <th>Файл и найденная строка</th>
+                    <th>Действия</th>
                   </tr>
                 </thead>
                 <tbody>${rows}</tbody>
@@ -1302,6 +1425,20 @@
         ${sections}
       </div>
     `;
+  }
+
+  function formatIntelxFileName(hit) {
+    const explicitName = String(hit?.fileName || "").trim();
+    if (explicitName) {
+      return explicitName;
+    }
+
+    const storageid = String(hit?.storageid || "").trim();
+    if (storageid) {
+      return `storage:${storageid.slice(0, 12)}...${storageid.slice(-8)}`;
+    }
+
+    return "Файл IntelX";
   }
 
   function buildWebArchiveTable(webarchiveData) {
@@ -1452,7 +1589,7 @@
             <h3>Последние URL</h3>
             <p>Сводка по снимкам Wayback</p>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap webarchive-recent-urls-wrap">
             <table class="table">
               <thead>
                 <tr>
@@ -1471,7 +1608,93 @@
     `;
   }
 
-  function buildEmailsTable(emailData, selectedEmailSourceKeys = new Set()) {
+  function formatDorkCount(value) {
+    if (value === null || value === undefined || value === "") {
+      return "-";
+    }
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return String(value);
+    }
+    return number.toLocaleString("ru-RU");
+  }
+
+  function buildDorkStatsTable(dorkStatsData) {
+    if (!dorkStatsData) {
+      return '<p class="hint">Статистика дорков еще не загружена. Запустите сбор статистики, чтобы сохранить результат в проект.</p>';
+    }
+
+    const summary = dorkStatsData.summary || {};
+    const rows = Array.isArray(dorkStatsData.rows) ? dorkStatsData.rows : [];
+    const statCards = [
+      { label: "Запросы", value: Number(summary.totalQueries) || rows.length },
+      { label: "OK", value: Number(summary.ok) || 0 },
+      { label: "Blocked", value: Number(summary.blocked) || 0 },
+      { label: "Ошибки", value: Number(summary.errors) || 0 },
+    ]
+      .map(
+        (item) => `
+          <div class="data-stat-card">
+            <div class="data-stat-value mono">${escapeHtml(String(item.value))}</div>
+            <div class="data-stat-label">${escapeHtml(item.label)}</div>
+          </div>
+        `,
+      )
+      .join("");
+
+    const tableRows = rows.length
+      ? rows
+          .map(
+            (item) => `
+              <tr>
+                <td>${escapeHtml(item.label || item.engine || "-")}</td>
+                <td class="mono">${escapeHtml(item.query || "-")}</td>
+                <td class="mono">${escapeHtml(formatDorkCount(item.totalResults))}</td>
+                <td class="mono">${escapeHtml(formatDorkCount(item.visibleResults))}</td>
+                <td><span class="pill tiny">${escapeHtml(item.status || "-")}</span></td>
+                <td>${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Открыть</a>` : "-"}</td>
+                <td class="webarchive-metadata-cell">${escapeHtml(item.error || "-")}</td>
+              </tr>
+            `,
+          )
+          .join("")
+      : `
+        <tr>
+          <td colspan="7">Статистика дорков пока пустая.</td>
+        </tr>
+      `;
+
+    const meta = [
+      dorkStatsData.domain ? `Домен: ${dorkStatsData.domain}` : "",
+      dorkStatsData.cachedAt ? `Кэшировано: ${formatDate(dorkStatsData.cachedAt)}` : "",
+      dorkStatsData.loadedAt ? `Загружено: ${formatDate(dorkStatsData.loadedAt)}` : "",
+    ].filter(Boolean).join(" · ");
+
+    return `
+      <div class="stack-lg">
+        <div class="hint">${escapeHtml(meta || "Результаты dork stats")}</div>
+        <div class="data-stat-grid">${statCards}</div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Поисковик</th>
+                <th>Запрос</th>
+                <th>Найдено</th>
+                <th>На странице</th>
+                <th>Статус</th>
+                <th>Ссылка</th>
+                <th>Ошибка</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildEmailsTable(emailData, selectedEmailSourceKeys = new Set(), projectId = "") {
     if (!emailData) {
       return '<p class="hint">Почты еще не собраны.</p>';
     }
@@ -1507,25 +1730,41 @@
 
     const rows = items
       .map((item) => {
-        const foundData = [
+        const intelxFileLinks = Array.isArray(item.intelxFiles) && item.intelxFiles.length
+          ? item.intelxFiles
+              .slice(0, 3)
+              .map((file, index) => {
+                const storageid = String(file.storageid || "").trim();
+                const bucket = String(file.bucket || "leaks.public.general").trim() || "leaks.public.general";
+                if (!storageid) {
+                  return "";
+                }
+                const href = `/api/projects/${encodeURIComponent(projectId || "")}/intelx-file?storageid=${encodeURIComponent(storageid)}&bucket=${encodeURIComponent(bucket)}`;
+                return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">IntelX файл ${index + 1}</a>`;
+              })
+              .filter(Boolean)
+          : [];
+        const foundDataParts = [
           Array.isArray(item.webarchiveAuthors) && item.webarchiveAuthors.length
-            ? `authors: ${item.webarchiveAuthors.join(", ")}`
+            ? `<div>authors: ${escapeHtml(item.webarchiveAuthors.join(", "))}</div>`
             : "",
           Array.isArray(item.webarchiveEditors) && item.webarchiveEditors.length
-            ? `editors: ${item.webarchiveEditors.join(", ")}`
+            ? `<div>editors: ${escapeHtml(item.webarchiveEditors.join(", "))}</div>`
             : "",
           Array.isArray(item.webarchiveTitles) && item.webarchiveTitles.length
-            ? `titles: ${item.webarchiveTitles.join(", ")}`
+            ? `<div>titles: ${escapeHtml(item.webarchiveTitles.join(", "))}</div>`
             : "",
           Array.isArray(item.webarchiveCompanies) && item.webarchiveCompanies.length
-            ? `company: ${item.webarchiveCompanies.join(", ")}`
+            ? `<div>company: ${escapeHtml(item.webarchiveCompanies.join(", "))}</div>`
             : "",
           Array.isArray(item.intelxSnippets) && item.intelxSnippets.length
-            ? `intelx: ${item.intelxSnippets.join(" | ")}`
+            ? `<div>intelx: ${escapeHtml(item.intelxSnippets.join(" | "))}</div>`
             : "",
-        ]
-          .filter(Boolean)
-          .join(" || ");
+          intelxFileLinks.length
+            ? `<div>files: ${intelxFileLinks.join(" · ")}</div>`
+            : "",
+        ];
+        const foundDataHtml = foundDataParts.filter(Boolean).join("");
 
         return `
           <tr>
@@ -1541,7 +1780,7 @@
             <td>${escapeHtml(Array.isArray(item.sources) ? item.sources.join(", ") : "-")}</td>
             <td>${escapeHtml(Array.isArray(item.intelxTerms) && item.intelxTerms.length ? item.intelxTerms.join(", ") : "-")}</td>
             <td>${escapeHtml(Array.isArray(item.webarchiveHosts) && item.webarchiveHosts.length ? item.webarchiveHosts.join(", ") : "-")}</td>
-            <td class="webarchive-metadata-cell">${escapeHtml(foundData || "-")}</td>
+            <td class="webarchive-metadata-cell">${foundDataHtml || "-"}</td>
             <td>${item.whois ? "Да" : "-"}</td>
             <td>${item.isManual ? '<span class="pill tiny">manual</span>' : "-"}</td>
           </tr>
@@ -1680,11 +1919,9 @@
 
   async function renderProjectPage(projectId) {
     let payload;
-    let passiveSourcePayload = null;
 
     try {
       payload = await api(`/api/projects/${encodeURIComponent(projectId)}`);
-      passiveSourcePayload = await api(`/api/projects/${encodeURIComponent(projectId)}/passive-sources`);
     } catch (error) {
       if (error.status === 404) {
         appEl.innerHTML = `
@@ -1710,11 +1947,13 @@
     let subdomains = [];
     let vtDeepData = null;
     let webarchiveData = project.webarchive || null;
+    let dorkStatsData = project.dorkStats || null;
     let intelxData = null;
     let emailData = project.emails || null;
     let activeDataTab = "subdomains";
     const selectedSubdomainIds = new Set();
     const selectedEmailSourceKeys = new Set();
+    const selectedIntelxHitKeys = new Set();
     let selectedRunId = runs[0] ? runs[0].id : null;
     const initialSubdomainsTotal = Number(project.counts && project.counts.subdomains) || 0;
     let subdomainsPagination = {
@@ -1735,13 +1974,10 @@
     let runsRenderPending = false;
     let runsRenderUnlockTimer = null;
     let timelineClusterize = null;
+    let subdomainsFilterFrame = null;
+    let subdomainsFilterTimer = null;
+    const completedDataRefreshKeys = new Set();
     let disposed = false;
-    const passiveSources = Array.isArray(passiveSourcePayload && passiveSourcePayload.sources)
-      ? passiveSourcePayload.sources
-      : [];
-    const passiveSourceOptions = passiveSources
-      .map((source) => `<option value="${escapeHtml(source)}">${escapeHtml(formatPassiveSourceLabel(source))}</option>`)
-      .join("");
     const projectDomainsMarkup = projectDomains
       .map((domain) => `<span class="pill mono">${escapeHtml(domain)}</span>`)
       .join("");
@@ -1751,79 +1987,44 @@
       project.intelx && project.intelx.querySource === "custom" && project.intelx.customQuery
         ? String(project.intelx.customQuery)
         : "";
+    const projectStatCards = [
+      { label: "Поддомены", value: Number(project.counts && project.counts.subdomains) || 0 },
+      { label: "DNS-записи", value: Number(project.counts && project.counts.dnsRecords) || 0 },
+      { label: "Запуски", value: Number(project.counts && project.counts.runs) || 0 },
+    ]
+      .map(
+        (item) => `
+          <div class="project-hero-stat">
+            <div class="project-hero-stat-value mono">${escapeHtml(String(item.value))}</div>
+            <div class="project-hero-stat-label">${escapeHtml(item.label)}</div>
+          </div>
+        `,
+      )
+      .join("");
 
     appEl.innerHTML = `
       <div id="project-page-root">
         <div class="project-column project-column-left">
-          <section class="panel hero">
-            <h1>${escapeHtml(projectName)}</h1>
-            <p>
-              Поддомены: ${Number(project.counts && project.counts.subdomains) || 0}
-              · DNS-записи: ${Number(project.counts && project.counts.dnsRecords) || 0}
-              · Запуски: ${Number(project.counts && project.counts.runs) || 0}
-            </p>
-            <div class="row wrap">
+          <section class="panel hero project-hero-panel">
+            <div class="project-hero-head">
+              <div class="project-hero-copy">
+                <div class="pill">Проект</div>
+                <h1>${escapeHtml(projectName)}</h1>
+                <p>Рабочая область для доменов, сканов, IntelX, WebArchive и связанных находок.</p>
+              </div>
+              <div class="project-hero-stats">
+                ${projectStatCards}
+              </div>
+            </div>
+            <div class="project-domain-strip">
               ${projectDomainsMarkup || '<span class="hint">Домены пока не добавлены.</span>'}
             </div>
-            <form id="project-domain-form">
-              <div class="row wrap">
+            <form id="project-domain-form" class="project-domain-form">
+              <div class="row wrap project-domain-form-row">
                 <input id="project-domain-input" class="text-input mono" type="text" placeholder="Добавить домен в этот проект" />
                 <button class="btn btn-secondary" id="project-domain-submit" type="submit">Добавить домен</button>
               </div>
             </form>
-          </section>
-
-          <section class="panel" id="project-actions-panel">
-            <div class="panel-header">
-              <h2>Действия</h2>
-            </div>
-            <div class="row" id="project-actions-stack">
-              <div class="action-group">
-                <div class="action-group-head">
-                  <div class="action-group-title">Пассивный скан</div>
-                  <button
-                    id="passive-scope-info-btn"
-                    class="info-icon-btn"
-                    type="button"
-                    aria-label="Показать отличия типов пассивных сканов"
-                    aria-expanded="false"
-                    aria-controls="passive-scope-info"
-                  >i</button>
-                </div>
-                <div id="passive-scope-info" class="passive-scope-info" hidden>
-                  <ul class="passive-scope-list">
-                    <li><span class="mono">base</span>: базовые web-источники без обязательных токенов.</li>
-                    <li><span class="mono">all</span>: base + token-based источники + dork-источники.</li>
-                  </ul>
-                </div>
-                <button class="btn btn-primary" id="run-passive-core-btn">Запустить пассивный скан (Base)</button>
-                <button class="btn btn-ghost" id="run-passive-all-btn">Запустить пассивный скан (All)</button>
-              </div>
-              <div class="action-group">
-                <div class="action-group-title">Отдельный провайдер</div>
-                <select class="text-input mono" id="run-passive-provider-select">
-                  ${passiveSourceOptions}
-                </select>
-                <button class="btn btn-secondary" id="run-passive-provider-btn">Запустить выбранный провайдер</button>
-              </div>
-              <div class="action-group">
-                <div class="action-group-title">DNS и WHOIS</div>
-                <button class="btn btn-ghost" id="run-whois-btn">WHOIS (корневой домен)</button>
-                <button class="btn btn-ghost" id="run-webarchive-btn">WebArchive</button>
-                <button class="btn btn-secondary" id="run-intelx-btn">Поиск утечек IntelX</button>
-                <button class="btn btn-secondary" id="run-resolve-fast-btn">DNS-резолв (быстрый)</button>
-                <button class="btn btn-ghost" id="run-resolve-extended-btn">DNS-резолв (расширенный)</button>
-              </div>
-              <div class="action-group">
-                <div class="action-group-title">Экспорт</div>
-                <button class="btn btn-secondary" id="export-domain-ip-csv-btn">Экспорт CSV domain;ip</button>
-              </div>
-              <div class="action-group action-group-danger">
-                <div class="action-group-title">Опасная зона</div>
-                <button class="btn btn-danger" id="delete-project-btn">Удалить проект</button>
-              </div>
-            </div>
-            <div id="project-action-message"></div>
           </section>
         </div>
 
@@ -1833,17 +2034,30 @@
               <h2>Данные</h2>
               <p id="subdomains-status-text">Автообновление каждые 3 с при активных запусках.</p>
             </div>
-            <div class="row wrap">
+            <div class="row wrap project-data-tabs">
               <button class="btn btn-primary" id="tab-subdomains-btn" type="button">Поддомены</button>
               <button class="btn btn-ghost" id="tab-whois-btn" type="button">WHOIS</button>
               <button class="btn btn-ghost" id="tab-webarchive-btn" type="button">WebArchive</button>
+              <button class="btn btn-ghost" id="tab-dork-stats-btn" type="button">Дорки</button>
               <button class="btn btn-ghost" id="tab-emails-btn" type="button">УЗ</button>
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
             </div>
-            <div id="subdomains-panel">
+            <div id="subdomains-panel" class="project-data-panel">
+            <div class="stack-md project-data-toolbar-stack">
+              <div class="row wrap project-panel-toolbar subdomains-scan-toolbar">
+                <input id="subdomains-search-input" class="text-input mono" type="search" placeholder="Поиск по поддоменам на текущей странице" />
+                <button class="btn btn-primary" id="run-passive-all-btn" type="button">Запустить скан (всё)</button>
+                <button class="btn btn-secondary" id="run-resolve-fast-btn" type="button">DNS-резолв (быстрый)</button>
+                <button class="btn btn-ghost" id="run-resolve-extended-btn" type="button">DNS-резолв (расширенный)</button>
+              </div>
+              <div class="row wrap project-panel-toolbar subdomains-export-toolbar">
+                <button class="btn btn-secondary" id="export-domain-ip-csv-btn" type="button">Экспорт CSV domain;ip</button>
+                <button class="btn btn-ghost" id="subdomains-export-table-csv-btn" type="button">Экспорт таблицы CSV</button>
+              </div>
+            </div>
             <form id="subdomain-create-form">
-              <div class="row wrap">
+              <div class="row wrap project-panel-toolbar">
                 <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
                 <button class="btn btn-primary" id="subdomain-create-btn" type="submit">Добавить поддомен</button>
                 <button class="btn btn-secondary" id="resolve-selected-btn" type="button">Резолв выбранных (быстрый)</button>
@@ -1853,31 +2067,38 @@
               </div>
             </form>
             <div id="subdomain-action-message"></div>
+            <div id="project-action-message"></div>
             <div id="subdomains-table-root"></div>
             </div>
-            <div id="whois-panel" style="display:none">
+            <div id="whois-panel" class="project-data-panel" hidden>
               <div class="whois-block">
                 <div class="panel-header">
                   <h3>WHOIS</h3>
                   <p>Снимок корневого домена</p>
                 </div>
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-secondary" id="run-whois-btn" type="button">Распознать WHOIS</button>
+                  <button class="btn btn-ghost" id="whois-export-csv-btn" type="button">Экспорт CSV</button>
+                </div>
                 <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
               </div>
             </div>
-            <div id="webarchive-panel" style="display:none">
-              <div class="stack-md">
-                <div class="row wrap">
+            <div id="webarchive-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-primary" id="run-webarchive-btn" type="button">Запустить задачу WebArchive</button>
                   <button class="btn btn-secondary" id="webarchive-load-btn" type="button">Загрузить WebArchive</button>
                   <button class="btn btn-ghost" id="webarchive-refresh-metadata-btn" type="button">Переизвлечь метаданные</button>
+                  <button class="btn btn-ghost" id="webarchive-export-csv-btn" type="button">Экспорт CSV</button>
                 </div>
                 <div class="hint">Ищет URL и документы из Wayback для доменов проекта и извлекает метаданные из PDF, DOC и DOCX.</div>
               </div>
               <div id="webarchive-action-message"></div>
               <div id="webarchive-table-root"></div>
             </div>
-            <div id="emails-panel" style="display:none">
-              <div class="stack-md">
-                <div class="row wrap">
+            <div id="emails-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
+                <div class="row wrap project-panel-toolbar">
                   <button class="btn btn-primary" id="emails-add-btn" type="button">Добавить УЗ</button>
                   <button class="btn btn-danger" id="emails-delete-selected-btn" type="button">Удалить выбранные</button>
                   <button class="btn btn-ghost" id="emails-edit-selected-btn" type="button">Изменить выбранный</button>
@@ -1889,33 +2110,61 @@
               <div id="emails-action-message"></div>
               <div id="emails-table-root"></div>
             </div>
-            <div id="vtdeep-panel" style="display:none">
-              <div class="row wrap">
+            <div id="dork-stats-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-ghost" id="open-google-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Google: site</button>
+                  <button class="btn btn-ghost" id="open-google-subdomain-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Google: *.site</button>
+                  <button class="btn btn-ghost" id="open-yandex-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Yandex: site</button>
+                  <button class="btn btn-ghost" id="open-yandex-subdomain-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Yandex: *.site</button>
+                  <button class="btn btn-secondary" id="dork-stats-load-btn" type="button">Обновить статистику дорков</button>
+                  <button class="btn btn-ghost" id="dork-stats-export-csv-btn" type="button">Экспорт CSV</button>
+                </div>
+                <div class="hint">Сохраняет примерное количество результатов Google и Yandex по site-доркам проекта.</div>
+              </div>
+              <div id="dork-stats-action-message"></div>
+              <div id="dork-stats-table-root"></div>
+            </div>
+            <div id="vtdeep-panel" class="project-data-panel" hidden>
+              <div class="row wrap project-panel-toolbar">
                 <button class="btn btn-secondary" id="vtdeep-load-btn" type="button">Загрузить данные VT Deep</button>
+                <button class="btn btn-ghost" id="vtdeep-export-csv-btn" type="button">Экспорт CSV</button>
               </div>
               <div id="vtdeep-action-message"></div>
               <div id="vtdeep-table-root"></div>
             </div>
-            <div id="intelx-panel" style="display:none">
-              <div class="stack-md">
+            <div id="intelx-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
                 <div class="field">
                   <label for="intelx-custom-query">Кастомный запрос IntelX</label>
                   <textarea id="intelx-custom-query" class="text-input mono" rows="3" placeholder="Например: &quot;site:example.com&quot; или произвольный IntelX запрос">${escapeHtml(initialIntelxCustomQuery)}</textarea>
                   <div class="hint">Если поле пустое, IntelX будет искать по доменам проекта.</div>
                 </div>
-                <div class="row wrap">
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-primary" id="run-intelx-btn" type="button">Запустить задачу IntelX</button>
                   <button class="btn btn-secondary" id="intelx-load-btn" type="button">Запустить IntelX</button>
+                  <button class="btn btn-ghost" id="intelx-edit-selected-btn" type="button">Изменить выбранный</button>
+                  <button class="btn btn-danger" id="intelx-delete-selected-btn" type="button">Удалить выбранные</button>
+                  <button class="btn btn-ghost" id="intelx-export-csv-btn" type="button">Экспорт CSV</button>
                 </div>
               </div>
               <div id="intelx-action-message"></div>
               <div id="intelx-table-root"></div>
+            </div>
+            <div class="project-data-panel">
+              <div class="row wrap project-panel-toolbar">
+                <button class="btn btn-danger" id="delete-project-btn" type="button">Удалить проект</button>
+              </div>
             </div>
           </section>
 
           <section class="panel">
             <div class="panel-header">
               <h2>Последние запуски</h2>
-              <p id="runs-status-text">Автообновление каждые 3 с</p>
+              <div class="row row-no-margin wrap">
+                <p id="runs-status-text">Автообновление каждые 3 с</p>
+                <button class="btn btn-ghost" id="runs-export-csv-btn" type="button">Экспорт CSV</button>
+              </div>
             </div>
             <div id="runs-table-root"></div>
             <div class="run-log" id="runs-log-root"></div>
@@ -1924,18 +2173,18 @@
       </div>
     `;
 
-    const runPassiveCoreBtn = document.getElementById("run-passive-core-btn");
     const runPassiveAllBtn = document.getElementById("run-passive-all-btn");
-    const runPassiveProviderSelect = document.getElementById("run-passive-provider-select");
-    const runPassiveProviderBtn = document.getElementById("run-passive-provider-btn");
-    const passiveScopeInfoBtn = document.getElementById("passive-scope-info-btn");
-    const passiveScopeInfo = document.getElementById("passive-scope-info");
     const runWhoisBtn = document.getElementById("run-whois-btn");
     const runWebarchiveBtn = document.getElementById("run-webarchive-btn");
     const runIntelxBtn = document.getElementById("run-intelx-btn");
+    const openGoogleDorkBtn = document.getElementById("open-google-dork-btn");
+    const openGoogleSubdomainDorkBtn = document.getElementById("open-google-subdomain-dork-btn");
+    const openYandexDorkBtn = document.getElementById("open-yandex-dork-btn");
+    const openYandexSubdomainDorkBtn = document.getElementById("open-yandex-subdomain-dork-btn");
     const runResolveFastBtn = document.getElementById("run-resolve-fast-btn");
     const runResolveExtendedBtn = document.getElementById("run-resolve-extended-btn");
     const exportDomainIpCsvBtn = document.getElementById("export-domain-ip-csv-btn");
+    const subdomainsExportTableCsvBtn = document.getElementById("subdomains-export-table-csv-btn");
     const deleteProjectBtn = document.getElementById("delete-project-btn");
     const actionMessageEl = document.getElementById("project-action-message");
     const projectDomainForm = document.getElementById("project-domain-form");
@@ -1950,12 +2199,14 @@
     const tabSubdomainsBtn = document.getElementById("tab-subdomains-btn");
     const tabWhoisBtn = document.getElementById("tab-whois-btn");
     const tabWebarchiveBtn = document.getElementById("tab-webarchive-btn");
+    const tabDorkStatsBtn = document.getElementById("tab-dork-stats-btn");
     const tabEmailsBtn = document.getElementById("tab-emails-btn");
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
     const webarchivePanel = document.getElementById("webarchive-panel");
+    const dorkStatsPanel = document.getElementById("dork-stats-panel");
     const emailsPanel = document.getElementById("emails-panel");
     const vtDeepPanel = document.getElementById("vtdeep-panel");
     const intelxPanel = document.getElementById("intelx-panel");
@@ -1966,14 +2217,21 @@
     const deleteSelectedBtn = document.getElementById("delete-selected-btn");
     const exportSelectedCsvBtn = document.getElementById("export-selected-csv-btn");
     const subdomainDeleteAllBtn = document.getElementById("subdomain-delete-all-btn");
+    const subdomainsSearchInput = document.getElementById("subdomains-search-input");
     const subdomainActionMessageEl = document.getElementById("subdomain-action-message");
     const vtDeepLoadBtn = document.getElementById("vtdeep-load-btn");
+    const vtDeepExportCsvBtn = document.getElementById("vtdeep-export-csv-btn");
     const vtDeepActionMessageEl = document.getElementById("vtdeep-action-message");
     const vtDeepTableRoot = document.getElementById("vtdeep-table-root");
     const webarchiveLoadBtn = document.getElementById("webarchive-load-btn");
     const webarchiveRefreshMetadataBtn = document.getElementById("webarchive-refresh-metadata-btn");
+    const webarchiveExportCsvBtn = document.getElementById("webarchive-export-csv-btn");
     const webarchiveActionMessageEl = document.getElementById("webarchive-action-message");
     const webarchiveTableRoot = document.getElementById("webarchive-table-root");
+    const dorkStatsLoadBtn = document.getElementById("dork-stats-load-btn");
+    const dorkStatsExportCsvBtn = document.getElementById("dork-stats-export-csv-btn");
+    const dorkStatsActionMessageEl = document.getElementById("dork-stats-action-message");
+    const dorkStatsTableRoot = document.getElementById("dork-stats-table-root");
     const emailsRefreshBtn = document.getElementById("emails-refresh-btn");
     const emailsAddBtn = document.getElementById("emails-add-btn");
     const emailsDeleteSelectedBtn = document.getElementById("emails-delete-selected-btn");
@@ -1985,6 +2243,11 @@
     const intelxCustomQueryInput = document.getElementById("intelx-custom-query");
     const intelxActionMessageEl = document.getElementById("intelx-action-message");
     const intelxTableRoot = document.getElementById("intelx-table-root");
+    const intelxEditSelectedBtn = document.getElementById("intelx-edit-selected-btn");
+    const intelxDeleteSelectedBtn = document.getElementById("intelx-delete-selected-btn");
+    const intelxExportCsvBtn = document.getElementById("intelx-export-csv-btn");
+    const whoisExportCsvBtn = document.getElementById("whois-export-csv-btn");
+    const runsExportCsvBtn = document.getElementById("runs-export-csv-btn");
 
     function autosizeWhoisField() {
       whoisInfoField.style.height = "auto";
@@ -2006,20 +2269,7 @@
       whoisInfoField.value = buildWhoisText(project.whois);
       autosizeWhoisField();
     }
-
-    function setPassiveScopeInfoOpen(isOpen) {
-      if (!passiveScopeInfoBtn || !passiveScopeInfo) {
-        return;
-      }
-      passiveScopeInfo.hidden = !isOpen;
-      passiveScopeInfoBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    }
-
-    if (passiveScopeInfoBtn && passiveScopeInfo) {
-      passiveScopeInfoBtn.addEventListener("click", () => {
-        setPassiveScopeInfoOpen(passiveScopeInfo.hidden);
-      });
-    }
+    whoisExportCsvBtn.disabled = !String(whoisInfoField.value || "").trim();
 
     function setActionMessage(message, kind) {
       if (!message) {
@@ -2072,6 +2322,15 @@
         kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
     }
 
+    function setDorkStatsMessage(message, kind) {
+      if (!message) {
+        dorkStatsActionMessageEl.innerHTML = "";
+        return;
+      }
+      dorkStatsActionMessageEl.innerHTML =
+        kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
+    }
+
     function setEmailsMessage(message, kind) {
       if (!message) {
         emailsActionMessageEl.innerHTML = "";
@@ -2085,18 +2344,21 @@
       const showSubdomains = activeDataTab === "subdomains";
       const showWhois = activeDataTab === "whois";
       const showWebarchive = activeDataTab === "webarchive";
+      const showDorkStats = activeDataTab === "dorkStats";
       const showEmails = activeDataTab === "emails";
       const showVtDeep = activeDataTab === "vtdeep";
       const showIntelx = activeDataTab === "intelx";
-      subdomainsPanel.style.display = showSubdomains ? "" : "none";
-      whoisPanel.style.display = showWhois ? "" : "none";
-      webarchivePanel.style.display = showWebarchive ? "" : "none";
-      emailsPanel.style.display = showEmails ? "" : "none";
-      vtDeepPanel.style.display = showVtDeep ? "" : "none";
-      intelxPanel.style.display = showIntelx ? "" : "none";
+      subdomainsPanel.hidden = !showSubdomains;
+      whoisPanel.hidden = !showWhois;
+      webarchivePanel.hidden = !showWebarchive;
+      dorkStatsPanel.hidden = !showDorkStats;
+      emailsPanel.hidden = !showEmails;
+      vtDeepPanel.hidden = !showVtDeep;
+      intelxPanel.hidden = !showIntelx;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
       tabWebarchiveBtn.className = showWebarchive ? "btn btn-primary" : "btn btn-ghost";
+      tabDorkStatsBtn.className = showDorkStats ? "btn btn-primary" : "btn btn-ghost";
       tabEmailsBtn.className = showEmails ? "btn btn-primary" : "btn btn-ghost";
       tabVtDeepBtn.className = showVtDeep ? "btn btn-primary" : "btn btn-ghost";
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
@@ -2136,44 +2398,45 @@
       return `${page}|${limit}|${total}|${totalPages}|${rowsSignature}`;
     }
 
+    function applySubdomainsSearchFilter() {
+      if (!subdomainsSearchInput) {
+        return;
+      }
+
+      const query = String(subdomainsSearchInput.value || "").trim().toLowerCase();
+      const rows = subdomainsTableRoot.querySelectorAll("tbody tr");
+
+      rows.forEach((row) => {
+        const firstCell = row.querySelector("td");
+        const hostText = String(firstCell ? firstCell.textContent || "" : "").toLowerCase();
+        const matches = !query || hostText.includes(query);
+        row.hidden = !matches;
+      });
+
+    }
+
+    function scheduleSubdomainsSearchFilter() {
+      if (subdomainsFilterTimer) {
+        clearTimeout(subdomainsFilterTimer);
+      }
+      subdomainsFilterTimer = setTimeout(() => {
+        subdomainsFilterTimer = null;
+        if (subdomainsFilterFrame) {
+          cancelAnimationFrame(subdomainsFilterFrame);
+        }
+        subdomainsFilterFrame = requestAnimationFrame(() => {
+          subdomainsFilterFrame = null;
+          applySubdomainsSearchFilter();
+        });
+      }, DEBOUNCE_FAST_MS);
+    }
+
     function renderRunsTable() {
       runsTableRoot.innerHTML = buildRunsTable(runs, selectedRunId);
 
       const hasActive = runs.some((run) => ACTIVE_STATUSES.has(run.status));
       runsStatusText.textContent = hasActive ? "Автообновление каждые 3 с" : "Ожидание";
-
-      const selectButtons = runsTableRoot.querySelectorAll("[data-action='select-run']");
-      selectButtons.forEach((button) => {
-        button.addEventListener("click", () => {
-          selectedRunId = button.getAttribute("data-run-id");
-          renderRunsTable();
-          renderRunsTimeline(true);
-        });
-      });
-
-      const cancelButtons = runsTableRoot.querySelectorAll("[data-action='cancel-run']");
-      cancelButtons.forEach((button) => {
-        button.addEventListener("click", async () => {
-          const runId = button.getAttribute("data-run-id");
-          if (!runId) {
-            return;
-          }
-
-          button.disabled = true;
-          try {
-            await api(`/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/cancel`, {
-              method: "POST",
-              body: {},
-            });
-            setActionMessage("Запрошена отмена", "success");
-            await refreshRuns();
-          } catch (error) {
-            setActionMessage(friendlyError(error, "Не удалось отменить запуск"), "error");
-          } finally {
-            button.disabled = false;
-          }
-        });
-      });
+      runsExportCsvBtn.disabled = runs.length === 0;
     }
 
     function renderRunsTimeline(force = false) {
@@ -2276,6 +2539,7 @@
       resolveSelectedBtn.disabled = selectedSubdomainIds.size === 0;
       deleteSelectedBtn.disabled = selectedSubdomainIds.size === 0;
       exportSelectedCsvBtn.disabled = selectedSubdomainIds.size === 0;
+      subdomainsExportTableCsvBtn.disabled = !subdomainsLoaded || subdomains.length === 0;
       resolveSelectedBtn.textContent = selectedSubdomainIds.size > 0
         ? `Резолв выбранных (быстрый) [${selectedSubdomainIds.size}]`
         : "Резолв выбранных (быстрый)";
@@ -2297,132 +2561,11 @@
         selectedSubdomainIds,
       );
 
-      const prevPageBtn = subdomainsTableRoot.querySelector("[data-action='subdomains-prev-page']");
-      if (prevPageBtn) {
-        prevPageBtn.addEventListener("click", () => {
-          const targetPage = Math.max(1, (Number(subdomainsPagination.page) || 1) - 1);
-          void refreshSubdomains(true, { page: targetPage });
-        });
-      }
-
-      const nextPageBtn = subdomainsTableRoot.querySelector("[data-action='subdomains-next-page']");
-      if (nextPageBtn) {
-        nextPageBtn.addEventListener("click", () => {
-          const totalPages = Math.max(1, Number(subdomainsPagination.totalPages) || 1);
-          const targetPage = Math.min(totalPages, (Number(subdomainsPagination.page) || 1) + 1);
-          void refreshSubdomains(true, { page: targetPage });
-        });
-      }
-
-      const pageSizeSelect = subdomainsTableRoot.querySelector("[data-action='subdomains-page-size']");
-      if (pageSizeSelect) {
-        pageSizeSelect.addEventListener("change", () => {
-          const nextLimit = normalizeSubdomainsPageSize(pageSizeSelect.value);
-          if (nextLimit === normalizeSubdomainsPageSize(subdomainsPagination.limit)) {
-            return;
-          }
-          void refreshSubdomains(true, { page: 1, limit: nextLimit });
-        });
-      }
-
-      const selectAllToggle = subdomainsTableRoot.querySelector("[data-action='subdomains-select-all']");
-      if (selectAllToggle) {
-        selectAllToggle.addEventListener("change", () => {
-          const rowToggles = subdomainsTableRoot.querySelectorAll("[data-action='toggle-subdomain-select']");
-          rowToggles.forEach((checkbox) => {
-            const id = checkbox.getAttribute("data-subdomain-id");
-            if (!id) {
-              return;
-            }
-            if (selectAllToggle.checked) {
-              selectedSubdomainIds.add(String(id));
-            } else {
-              selectedSubdomainIds.delete(String(id));
-            }
-          });
-          renderSubdomains();
-        });
-      }
-
-      const rowSelectToggles = subdomainsTableRoot.querySelectorAll("[data-action='toggle-subdomain-select']");
-      rowSelectToggles.forEach((checkbox) => {
-        checkbox.addEventListener("change", () => {
-          const id = checkbox.getAttribute("data-subdomain-id");
-          if (!id) {
-            return;
-          }
-          if (checkbox.checked) {
-            selectedSubdomainIds.add(String(id));
-          } else {
-            selectedSubdomainIds.delete(String(id));
-          }
-          renderSubdomains();
-        });
-      });
-
-      const editButtons = subdomainsTableRoot.querySelectorAll("[data-action='edit-subdomain']");
-      editButtons.forEach((button) => {
-        button.addEventListener("click", async () => {
-          const subdomainId = button.getAttribute("data-subdomain-id");
-          const currentHost = button.getAttribute("data-host") || "";
-          if (!subdomainId) {
-            return;
-          }
-
-          const nextHost = window.prompt("Изменить хост поддомена", currentHost);
-          if (nextHost === null) {
-            return;
-          }
-
-          button.disabled = true;
-          setSubdomainMessage("", "");
-          try {
-            await api(
-              `/api/projects/${encodeURIComponent(projectId)}/subdomains/${encodeURIComponent(subdomainId)}`,
-              { method: "PUT", body: { host: nextHost } },
-            );
-            setSubdomainMessage("Поддомен обновлен", "success");
-            await refreshSubdomains(true);
-          } catch (error) {
-            setSubdomainMessage(friendlyError(error, "Не удалось обновить поддомен"), "error");
-          } finally {
-            button.disabled = false;
-          }
-        });
-      });
-
-      const deleteButtons = subdomainsTableRoot.querySelectorAll("[data-action='delete-subdomain']");
-      deleteButtons.forEach((button) => {
-        button.addEventListener("click", async () => {
-          const subdomainId = button.getAttribute("data-subdomain-id");
-          if (!subdomainId) {
-            return;
-          }
-
-          const confirmed = window.confirm("Удалить этот поддомен?");
-          if (!confirmed) {
-            return;
-          }
-
-          button.disabled = true;
-          setSubdomainMessage("", "");
-          try {
-            await api(
-              `/api/projects/${encodeURIComponent(projectId)}/subdomains/${encodeURIComponent(subdomainId)}`,
-              { method: "DELETE" },
-            );
-            setSubdomainMessage("Поддомен удален", "success");
-            await refreshSubdomains(true);
-          } catch (error) {
-            setSubdomainMessage(friendlyError(error, "Не удалось удалить поддомен"), "error");
-          } finally {
-            button.disabled = false;
-          }
-        });
-      });
+      applySubdomainsSearchFilter();
     }
 
     function renderVtDeep() {
+      vtDeepExportCsvBtn.disabled = !vtDeepData;
       vtDeepTableRoot.innerHTML = buildVtDeepTable(vtDeepData);
       if (vtDeepData && Array.isArray(vtDeepData.warnings) && vtDeepData.warnings.length) {
         setVtDeepMessage(`Предупреждения: ${vtDeepData.warnings.join("; ")}`, "error");
@@ -2432,7 +2575,27 @@
     }
 
     function renderIntelx() {
-      intelxTableRoot.innerHTML = buildIntelxTable(intelxData);
+      const searches = Array.isArray(intelxData?.searches) ? intelxData.searches : [];
+      const validHitKeys = new Set();
+      searches.forEach((entry, searchIndex) => {
+        const hits = Array.isArray(entry?.hits) ? entry.hits : [];
+        hits.forEach((_hit, hitIndex) => {
+          validHitKeys.add(`${searchIndex}:${hitIndex}`);
+        });
+      });
+      for (const key of Array.from(selectedIntelxHitKeys)) {
+        if (!validHitKeys.has(key)) {
+          selectedIntelxHitKeys.delete(key);
+        }
+      }
+
+      intelxEditSelectedBtn.disabled = selectedIntelxHitKeys.size !== 1;
+      intelxDeleteSelectedBtn.disabled = selectedIntelxHitKeys.size === 0;
+      intelxExportCsvBtn.disabled = !intelxData;
+      intelxDeleteSelectedBtn.textContent = selectedIntelxHitKeys.size > 0
+        ? `Удалить выбранные [${selectedIntelxHitKeys.size}]`
+        : "Удалить выбранные";
+      intelxTableRoot.innerHTML = buildIntelxTable(intelxData, projectId, selectedIntelxHitKeys);
       if (intelxData && Array.isArray(intelxData.warnings) && intelxData.warnings.length) {
         setIntelxMessage(`Предупреждения: ${intelxData.warnings.join("; ")}`, "error");
       } else {
@@ -2440,9 +2603,36 @@
       }
     }
 
+    function parseIntelxHitKey(key) {
+      const [searchIndexRaw, hitIndexRaw] = String(key || "").split(":");
+      const searchIndex = Number.parseInt(searchIndexRaw, 10);
+      const hitIndex = Number.parseInt(hitIndexRaw, 10);
+      if (!Number.isInteger(searchIndex) || searchIndex < 0 || !Number.isInteger(hitIndex) || hitIndex < 0) {
+        return null;
+      }
+      return { searchIndex, hitIndex };
+    }
+
+    function getIntelxHitByKey(key) {
+      const ref = parseIntelxHitKey(key);
+      if (!ref) {
+        return null;
+      }
+      const search = Array.isArray(intelxData?.searches) ? intelxData.searches[ref.searchIndex] : null;
+      const hit = search && Array.isArray(search.hits) ? search.hits[ref.hitIndex] : null;
+      return hit ? { ref, search, hit } : null;
+    }
+
     function renderWebArchive() {
+      webarchiveExportCsvBtn.disabled = !webarchiveData;
       webarchiveTableRoot.innerHTML = buildWebArchiveTable(webarchiveData);
       setWebarchiveMessage("", "");
+    }
+
+    function renderDorkStats() {
+      dorkStatsExportCsvBtn.disabled = !dorkStatsData;
+      dorkStatsTableRoot.innerHTML = buildDorkStatsTable(dorkStatsData);
+      setDorkStatsMessage("", "");
     }
 
     function renderEmails() {
@@ -2457,23 +2647,26 @@
       emailsDeleteSelectedBtn.textContent = selectedEmailSourceKeys.size > 0
         ? `Удалить выбранные [${selectedEmailSourceKeys.size}]`
         : "Удалить выбранные";
-      emailsTableRoot.innerHTML = buildEmailsTable(emailData, selectedEmailSourceKeys);
-      const checkboxes = emailsTableRoot.querySelectorAll("[data-action='toggle-email-select']");
-      checkboxes.forEach((checkbox) => {
-        checkbox.addEventListener("change", () => {
-          const key = checkbox.getAttribute("data-email-source-key");
-          if (!key) {
-            return;
-          }
-          if (checkbox.checked) {
-            selectedEmailSourceKeys.add(String(key));
-          } else {
-            selectedEmailSourceKeys.delete(String(key));
-          }
-          renderEmails();
-        });
-      });
+      emailsTableRoot.innerHTML = buildEmailsTable(emailData, selectedEmailSourceKeys, projectId);
       setEmailsMessage("", "");
+    }
+
+    function renderActiveDataTabContent() {
+      if (activeDataTab === "subdomains") {
+        renderSubdomains();
+      } else if (activeDataTab === "whois") {
+        autosizeWhoisField();
+      } else if (activeDataTab === "webarchive") {
+        renderWebArchive();
+      } else if (activeDataTab === "dorkStats") {
+        renderDorkStats();
+      } else if (activeDataTab === "emails") {
+        renderEmails();
+      } else if (activeDataTab === "vtdeep") {
+        renderVtDeep();
+      } else if (activeDataTab === "intelx") {
+        renderIntelx();
+      }
     }
 
     async function refreshSubdomains(forceRender = false, options = {}) {
@@ -2536,6 +2729,7 @@
         }
         whoisInfoField.value = buildWhoisText(payloadWhois && payloadWhois.whois);
         autosizeWhoisField();
+        whoisExportCsvBtn.disabled = !String(whoisInfoField.value || "").trim();
       } catch {
         // ignore background whois refresh errors
       }
@@ -2548,7 +2742,9 @@
           return;
         }
         vtDeepData = payload && payload.result ? payload.result : null;
-        renderVtDeep();
+        if (activeDataTab === "vtdeep") {
+          renderVtDeep();
+        }
       } catch {
         // ignore background vt deep refresh errors
       }
@@ -2561,9 +2757,26 @@
           return;
         }
         webarchiveData = payload && payload.result ? payload.result : null;
-        renderWebArchive();
+        if (activeDataTab === "webarchive") {
+          renderWebArchive();
+        }
       } catch (error) {
         setWebarchiveMessage(friendlyError(error, "Не удалось загрузить данные WebArchive"), "error");
+      }
+    }
+
+    async function refreshDorkStatsInfo() {
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/dork-stats`);
+        if (disposed) {
+          return;
+        }
+        dorkStatsData = payload && payload.result ? payload.result : null;
+        if (activeDataTab === "dorkStats") {
+          renderDorkStats();
+        }
+      } catch (error) {
+        setDorkStatsMessage(friendlyError(error, "Не удалось загрузить статистику дорков"), "error");
       }
     }
 
@@ -2574,7 +2787,9 @@
           return;
         }
         emailData = payload && payload.result ? payload.result : null;
-        renderEmails();
+        if (activeDataTab === "emails") {
+          renderEmails();
+        }
       } catch (error) {
         setEmailsMessage(friendlyError(error, "Не удалось загрузить УЗ"), "error");
       }
@@ -2587,7 +2802,9 @@
           return;
         }
         intelxData = payload && payload.result ? payload.result : null;
-        renderIntelx();
+        if (activeDataTab === "intelx") {
+          renderIntelx();
+        }
       } catch (error) {
         setIntelxMessage(friendlyError(error, "Не удалось загрузить данные IntelX"), "error");
       }
@@ -2633,21 +2850,39 @@
           // Even when table signature is unchanged, timeline events may update.
           renderRunsTimeline(false);
         }
-        if (runs.some((run) => run.taskKind === "WHOIS" && run.status === "SUCCESS")) {
+
+        function hasNewSuccessfulRun(taskKind) {
+          return runs.some((run) => {
+            if (run.taskKind !== taskKind || run.status !== "SUCCESS") {
+              return false;
+            }
+            const key = `${taskKind}:${run.id || run.finishedAt || run.startedAt || ""}`;
+            if (completedDataRefreshKeys.has(key)) {
+              return false;
+            }
+            completedDataRefreshKeys.add(key);
+            return true;
+          });
+        }
+
+        if (hasNewSuccessfulRun("WHOIS")) {
           await refreshWhoisInfo();
         }
-        if (runs.some((run) => run.taskKind === "VT_DEEP" && run.status === "SUCCESS")) {
+        if (hasNewSuccessfulRun("VT_DEEP")) {
           await refreshVtDeepInfo();
         }
-        if (runs.some((run) => run.taskKind === "WEBARCHIVE" && run.status === "SUCCESS")) {
+        if (hasNewSuccessfulRun("WEBARCHIVE")) {
           await refreshWebArchiveInfo();
           await refreshEmailsInfo();
         }
-        if (runs.some((run) => run.taskKind === "WEBARCHIVE_METADATA" && run.status === "SUCCESS")) {
+        if (hasNewSuccessfulRun("WEBARCHIVE_METADATA")) {
           await refreshWebArchiveInfo();
           await refreshEmailsInfo();
         }
-        if (runs.some((run) => run.taskKind === "INTELX_LEAKS" && run.status === "SUCCESS")) {
+        if (hasNewSuccessfulRun("DORK_STATS")) {
+          await refreshDorkStatsInfo();
+        }
+        if (hasNewSuccessfulRun("INTELX_LEAKS")) {
           await refreshIntelxInfo();
           await refreshEmailsInfo();
         }
@@ -2663,31 +2898,45 @@
     }
 
     function setActionButtonsDisabled(disabled) {
-      runPassiveCoreBtn.disabled = disabled;
       runPassiveAllBtn.disabled = disabled;
-      runPassiveProviderSelect.disabled = disabled || !passiveSources.length;
-      runPassiveProviderBtn.disabled = disabled || !passiveSources.length;
       runWhoisBtn.disabled = disabled;
       runWebarchiveBtn.disabled = disabled;
       runIntelxBtn.disabled = disabled;
+      openGoogleDorkBtn.disabled = disabled || !primaryDomain;
+      openGoogleSubdomainDorkBtn.disabled = disabled || !primaryDomain;
+      openYandexDorkBtn.disabled = disabled || !primaryDomain;
+      openYandexSubdomainDorkBtn.disabled = disabled || !primaryDomain;
+      dorkStatsLoadBtn.disabled = disabled || !primaryDomain;
       runResolveFastBtn.disabled = disabled;
       runResolveExtendedBtn.disabled = disabled;
       exportDomainIpCsvBtn.disabled = disabled;
+      subdomainsExportTableCsvBtn.disabled = disabled || !subdomainsLoaded || subdomains.length === 0;
       deleteProjectBtn.disabled = disabled;
       projectDomainInput.disabled = disabled;
       projectDomainSubmit.disabled = disabled;
       vtDeepLoadBtn.disabled = disabled;
+      vtDeepExportCsvBtn.disabled = disabled || !vtDeepData;
       webarchiveLoadBtn.disabled = disabled;
       webarchiveRefreshMetadataBtn.disabled = disabled;
+      webarchiveExportCsvBtn.disabled = disabled || !webarchiveData;
       emailsRefreshBtn.disabled = disabled;
       emailsAddBtn.disabled = disabled;
       emailsDeleteSelectedBtn.disabled = disabled || selectedEmailSourceKeys.size === 0;
       emailsEditSelectedBtn.disabled = disabled || selectedEmailSourceKeys.size !== 1;
       emailsExportCsvBtn.disabled = disabled;
       intelxLoadBtn.disabled = disabled;
+      intelxEditSelectedBtn.disabled = disabled || selectedIntelxHitKeys.size !== 1;
+      intelxDeleteSelectedBtn.disabled = disabled || selectedIntelxHitKeys.size === 0;
+      intelxExportCsvBtn.disabled = disabled || !intelxData;
+      dorkStatsExportCsvBtn.disabled = disabled || !dorkStatsData;
+      whoisExportCsvBtn.disabled = disabled || !String(whoisInfoField.value || "").trim();
+      runsExportCsvBtn.disabled = disabled || runs.length === 0;
       resolveSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       deleteSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       exportSelectedCsvBtn.disabled = disabled || selectedSubdomainIds.size === 0;
+      if (subdomainsSearchInput) {
+        subdomainsSearchInput.disabled = disabled;
+      }
     }
 
     async function queueAction(endpoint, successMessage, body) {
@@ -2710,33 +2959,469 @@
       return customQuery ? { customQuery } : {};
     }
 
-    runPassiveCoreBtn.addEventListener("click", () => {
-      void queueAction(
-        `/api/projects/${encodeURIComponent(projectId)}/scan`,
-        "Пассивный скан поставлен в очередь (base)",
-        { scope: "core" },
-      );
+    function projectCsvFileName(suffix) {
+      return `${getProjectFileStem(project)}-${suffix}.csv`;
+    }
+
+    function exportRowsCsv(filename, headers, rows, emptyMessage, setMessage) {
+      if (!rows.length) {
+        setMessage(emptyMessage, "error");
+        return;
+      }
+      downloadCsvFile(filename, headers, rows);
+      setMessage("CSV экспортирован", "success");
+    }
+
+    function exportRunsCsv() {
+      const headers = ["type", "taskKind", "scanScope", "status", "progress", "processed", "total", "stage", "startedAt", "finishedAt", "error"];
+      const rows = runs.map((run) => ({
+        type: run.type || "",
+        taskKind: run.taskKind || "",
+        scanScope: run.scanScope || "",
+        status: run.status || "",
+        progress: Number(run.progress) || 0,
+        processed: Number(run.processed) || 0,
+        total: run.total ?? "",
+        stage: run.stage || "",
+        startedAt: run.startedAt || "",
+        finishedAt: run.finishedAt || "",
+        error: run.error || "",
+      }));
+      exportRowsCsv(projectCsvFileName("runs"), headers, rows, "Запусков для экспорта нет", setActionMessage);
+    }
+
+    function exportSubdomainsTableCsv() {
+      const headers = ["host", "isRoot", "sources", "ips", "updatedAt"];
+      const rows = subdomains.map((subdomain) => {
+        const ips = Array.from(
+          new Set(
+            (subdomain.dnsRecords || [])
+              .filter((record) => record.recordType === "A" || record.recordType === "AAAA")
+              .map((record) => record.value),
+          ),
+        );
+        return {
+          host: subdomain.host || "",
+          isRoot: subdomain.isRoot ? "1" : "0",
+          sources: Array.isArray(subdomain.sources) ? subdomain.sources.map((item) => item.source).join(", ") : "",
+          ips: ips.join(", "),
+          updatedAt: subdomain.updatedAt || "",
+        };
+      });
+      exportRowsCsv(projectCsvFileName("subdomains-page"), headers, rows, "Поддоменов для экспорта нет", setSubdomainMessage);
+    }
+
+    function exportWhoisCsv() {
+      const headers = ["field", "value"];
+      const rows = String(whoisInfoField.value || "")
+        .split(/\r?\n/)
+        .map((line) => {
+          const idx = line.indexOf(":");
+          return idx >= 0
+            ? { field: line.slice(0, idx).trim(), value: line.slice(idx + 1).trim() }
+            : { field: "", value: line.trim() };
+        })
+        .filter((row) => row.field || row.value);
+      exportRowsCsv(projectCsvFileName("whois"), headers, rows, "WHOIS для экспорта пуст", setActionMessage);
+    }
+
+    function exportVtDeepCsv() {
+      const headers = ["relationship", "name", "sha256", "id", "positives", "total", "lastSeen", "vtLink"];
+      const rows = (Array.isArray(vtDeepData?.files) ? vtDeepData.files : []).map((item) => ({
+        relationship: item.relationship || "",
+        name: item.name || "",
+        sha256: item.sha256 || "",
+        id: item.id || "",
+        positives: item.positives ?? "",
+        total: item.total ?? "",
+        lastSeen: item.lastSeen || "",
+        vtLink: item.vtLink || "",
+      }));
+      exportRowsCsv(projectCsvFileName("vtdeep"), headers, rows, "VT Deep данных для экспорта нет", setVtDeepMessage);
+    }
+
+    function exportDorkStatsCsv() {
+      const headers = ["label", "engine", "query", "totalResults", "visibleResults", "status", "url", "error"];
+      const rows = (Array.isArray(dorkStatsData?.rows) ? dorkStatsData.rows : []).map((item) => ({
+        label: item.label || "",
+        engine: item.engine || "",
+        query: item.query || "",
+        totalResults: item.totalResults ?? "",
+        visibleResults: item.visibleResults ?? "",
+        status: item.status || "",
+        url: item.url || "",
+        error: item.error || "",
+      }));
+      exportRowsCsv(projectCsvFileName("dork-stats"), headers, rows, "Статистики дорков для экспорта нет", setDorkStatsMessage);
+    }
+
+    function exportIntelxCsv() {
+      const headers = ["term", "count", "fileName", "storageid", "bucket", "line"];
+      const rows = [];
+      const searches = Array.isArray(intelxData?.searches) ? intelxData.searches : [];
+      searches.forEach((entry) => {
+        const hits = Array.isArray(entry?.hits) ? entry.hits : [];
+        hits.forEach((hit) => {
+          rows.push({
+            term: entry.term || "",
+            count: entry.count ?? hits.length,
+            fileName: formatIntelxFileName(hit),
+            storageid: hit.storageid || "",
+            bucket: hit.bucket || "leaks.public.general",
+            line: hit.line || "",
+          });
+        });
+      });
+      exportRowsCsv(projectCsvFileName("intelx"), headers, rows, "IntelX данных для экспорта нет", setIntelxMessage);
+    }
+
+    function exportWebArchiveCsv() {
+      const headers = [
+        "kind",
+        "type",
+        "host",
+        "url",
+        "mimetype",
+        "capturedAt",
+        "author",
+        "lastModifiedBy",
+        "title",
+        "company",
+        "emails",
+        "length",
+        "metadataStatus",
+        "archiveUrl",
+      ];
+      const rows = [];
+      const documents = Array.isArray(webarchiveData?.documents) ? webarchiveData.documents : [];
+      documents.forEach((item) => {
+        rows.push({
+          kind: "document",
+          type: String(item.type || "").toUpperCase(),
+          host: item.host || "",
+          url: item.url || "",
+          mimetype: item.mimetype || "",
+          capturedAt: item.capturedAt || "",
+          author: item.metadata?.author || "",
+          lastModifiedBy: item.metadata?.lastModifiedBy || "",
+          title: item.metadata?.title || "",
+          company: item.metadata?.company || item.metadata?.application || item.metadata?.producer || "",
+          emails: csvList(item.metadata?.emails),
+          length: item.length ?? "",
+          metadataStatus: item.metadataStatus || "",
+          archiveUrl: item.archiveUrl || "",
+        });
+      });
+      const recentUrls = Array.isArray(webarchiveData?.recentUrls) ? webarchiveData.recentUrls : [];
+      recentUrls.forEach((item) => {
+        rows.push({
+          kind: "recent_url",
+          type: "",
+          host: item.host || "",
+          url: item.url || "",
+          mimetype: item.mimetype || "",
+          capturedAt: item.capturedAt || "",
+          author: "",
+          lastModifiedBy: "",
+          title: "",
+          company: "",
+          emails: "",
+          length: "",
+          metadataStatus: "",
+          archiveUrl: item.archiveUrl || "",
+        });
+      });
+      exportRowsCsv(projectCsvFileName("webarchive"), headers, rows, "WebArchive данных для экспорта нет", setWebarchiveMessage);
+    }
+
+    runsTableRoot.addEventListener("click", async (event) => {
+      const selectButton = closestAction(event.target, "select-run");
+      if (selectButton && runsTableRoot.contains(selectButton)) {
+        selectedRunId = selectButton.getAttribute("data-run-id");
+        renderRunsTable();
+        renderRunsTimeline(true);
+        return;
+      }
+
+      const cancelButton = closestAction(event.target, "cancel-run");
+      if (!cancelButton || !runsTableRoot.contains(cancelButton)) {
+        return;
+      }
+
+      const runId = cancelButton.getAttribute("data-run-id");
+      if (!runId) {
+        return;
+      }
+
+      cancelButton.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/cancel`, {
+          method: "POST",
+          body: {},
+        });
+        setActionMessage("Запрошена отмена", "success");
+        await refreshRuns();
+      } catch (error) {
+        setActionMessage(friendlyError(error, "Не удалось отменить запуск"), "error");
+      } finally {
+        cancelButton.disabled = false;
+      }
+    });
+
+    subdomainsTableRoot.addEventListener("click", async (event) => {
+      const prevPageBtn = closestAction(event.target, "subdomains-prev-page");
+      if (prevPageBtn && subdomainsTableRoot.contains(prevPageBtn)) {
+        const targetPage = Math.max(1, (Number(subdomainsPagination.page) || 1) - 1);
+        void refreshSubdomains(true, { page: targetPage });
+        return;
+      }
+
+      const nextPageBtn = closestAction(event.target, "subdomains-next-page");
+      if (nextPageBtn && subdomainsTableRoot.contains(nextPageBtn)) {
+        const totalPages = Math.max(1, Number(subdomainsPagination.totalPages) || 1);
+        const targetPage = Math.min(totalPages, (Number(subdomainsPagination.page) || 1) + 1);
+        void refreshSubdomains(true, { page: targetPage });
+        return;
+      }
+
+      const editButton = closestAction(event.target, "edit-subdomain");
+      if (editButton && subdomainsTableRoot.contains(editButton)) {
+        const subdomainId = editButton.getAttribute("data-subdomain-id");
+        const currentHost = editButton.getAttribute("data-host") || "";
+        if (!subdomainId) {
+          return;
+        }
+
+        const nextHost = window.prompt("Изменить хост поддомена", currentHost);
+        if (nextHost === null) {
+          return;
+        }
+
+        editButton.disabled = true;
+        setSubdomainMessage("", "");
+        try {
+          await api(
+            `/api/projects/${encodeURIComponent(projectId)}/subdomains/${encodeURIComponent(subdomainId)}`,
+            { method: "PUT", body: { host: nextHost } },
+          );
+          setSubdomainMessage("Поддомен обновлен", "success");
+          await refreshSubdomains(true);
+        } catch (error) {
+          setSubdomainMessage(friendlyError(error, "Не удалось обновить поддомен"), "error");
+        } finally {
+          editButton.disabled = false;
+        }
+        return;
+      }
+
+      const deleteButton = closestAction(event.target, "delete-subdomain");
+      if (!deleteButton || !subdomainsTableRoot.contains(deleteButton)) {
+        return;
+      }
+
+      const subdomainId = deleteButton.getAttribute("data-subdomain-id");
+      if (!subdomainId || !window.confirm("Удалить этот поддомен?")) {
+        return;
+      }
+
+      deleteButton.disabled = true;
+      setSubdomainMessage("", "");
+      try {
+        await api(
+          `/api/projects/${encodeURIComponent(projectId)}/subdomains/${encodeURIComponent(subdomainId)}`,
+          { method: "DELETE" },
+        );
+        setSubdomainMessage("Поддомен удален", "success");
+        await refreshSubdomains(true);
+      } catch (error) {
+        setSubdomainMessage(friendlyError(error, "Не удалось удалить поддомен"), "error");
+      } finally {
+        deleteButton.disabled = false;
+      }
+    });
+
+    subdomainsTableRoot.addEventListener("change", (event) => {
+      const pageSizeSelect = closestAction(event.target, "subdomains-page-size");
+      if (pageSizeSelect && subdomainsTableRoot.contains(pageSizeSelect)) {
+        const nextLimit = normalizeSubdomainsPageSize(pageSizeSelect.value);
+        if (nextLimit !== normalizeSubdomainsPageSize(subdomainsPagination.limit)) {
+          void refreshSubdomains(true, { page: 1, limit: nextLimit });
+        }
+        return;
+      }
+
+      const selectAllToggle = closestAction(event.target, "subdomains-select-all");
+      if (selectAllToggle && subdomainsTableRoot.contains(selectAllToggle)) {
+        const rowToggles = subdomainsTableRoot.querySelectorAll("[data-action='toggle-subdomain-select']");
+        rowToggles.forEach((checkbox) => {
+          const id = checkbox.getAttribute("data-subdomain-id");
+          if (!id) {
+            return;
+          }
+          if (selectAllToggle.checked) {
+            selectedSubdomainIds.add(String(id));
+          } else {
+            selectedSubdomainIds.delete(String(id));
+          }
+        });
+        renderSubdomains();
+        return;
+      }
+
+      const rowToggle = closestAction(event.target, "toggle-subdomain-select");
+      if (!rowToggle || !subdomainsTableRoot.contains(rowToggle)) {
+        return;
+      }
+
+      const id = rowToggle.getAttribute("data-subdomain-id");
+      if (!id) {
+        return;
+      }
+      if (rowToggle.checked) {
+        selectedSubdomainIds.add(String(id));
+      } else {
+        selectedSubdomainIds.delete(String(id));
+      }
+      renderSubdomains();
+    });
+
+    emailsTableRoot.addEventListener("change", (event) => {
+      const checkbox = closestAction(event.target, "toggle-email-select");
+      if (!checkbox || !emailsTableRoot.contains(checkbox)) {
+        return;
+      }
+      const key = checkbox.getAttribute("data-email-source-key");
+      if (!key) {
+        return;
+      }
+      if (checkbox.checked) {
+        selectedEmailSourceKeys.add(String(key));
+      } else {
+        selectedEmailSourceKeys.delete(String(key));
+      }
+      renderEmails();
+    });
+
+    async function editIntelxHit(hitKey) {
+      const current = getIntelxHitByKey(hitKey);
+      if (!current) {
+        setIntelxMessage("IntelX строка не найдена", "error");
+        return;
+      }
+
+      const currentFileName = String(current.hit.fileName || "");
+      const nextFileName = window.prompt("Имя файла IntelX", currentFileName);
+      if (nextFileName === null) {
+        return;
+      }
+
+      const nextLine = window.prompt("Найденная строка", current.hit.line || "");
+      if (nextLine === null) {
+        return;
+      }
+
+      setActionButtonsDisabled(true);
+      setIntelxMessage("", "");
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/intelx-leaks/hit`, {
+          method: "PUT",
+          body: {
+            ...current.ref,
+            fileName: nextFileName,
+            line: nextLine,
+          },
+        });
+        intelxData = payload && payload.result ? payload.result : intelxData;
+        renderIntelx();
+        setIntelxMessage("IntelX строка обновлена", "success");
+      } catch (error) {
+        setIntelxMessage(friendlyError(error, "Не удалось изменить IntelX строку"), "error");
+      } finally {
+        setActionButtonsDisabled(false);
+      }
+    }
+
+    async function deleteIntelxHits(hitKeys) {
+      const refs = Array.from(new Set(hitKeys)).map(parseIntelxHitKey).filter(Boolean);
+      if (!refs.length) {
+        setIntelxMessage("Выберите хотя бы одну IntelX строку", "error");
+        return;
+      }
+
+      if (!window.confirm(`Удалить IntelX строки: ${refs.length}?`)) {
+        return;
+      }
+
+      setActionButtonsDisabled(true);
+      setIntelxMessage("", "");
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/intelx-leaks/delete`, {
+          method: "POST",
+          body: { hits: refs },
+        });
+        intelxData = payload && payload.result ? payload.result : intelxData;
+        selectedIntelxHitKeys.clear();
+        renderIntelx();
+        setIntelxMessage(`Удалено IntelX строк: ${Number(payload && payload.deleted) || refs.length}`, "success");
+      } catch (error) {
+        setIntelxMessage(friendlyError(error, "Не удалось удалить IntelX строки"), "error");
+      } finally {
+        setActionButtonsDisabled(false);
+      }
+    }
+
+    intelxTableRoot.addEventListener("click", (event) => {
+      const editButton = closestAction(event.target, "edit-intelx-hit");
+      if (editButton && intelxTableRoot.contains(editButton)) {
+        void editIntelxHit(editButton.getAttribute("data-hit-key"));
+        return;
+      }
+
+      const deleteButton = closestAction(event.target, "delete-intelx-hit");
+      if (deleteButton && intelxTableRoot.contains(deleteButton)) {
+        void deleteIntelxHits([deleteButton.getAttribute("data-hit-key")]);
+      }
+    });
+
+    intelxTableRoot.addEventListener("change", (event) => {
+      const sectionToggle = closestAction(event.target, "intelx-select-search");
+      if (sectionToggle && intelxTableRoot.contains(sectionToggle)) {
+        const searchIndex = Number.parseInt(sectionToggle.getAttribute("data-search-index") || "", 10);
+        const search = Array.isArray(intelxData?.searches) ? intelxData.searches[searchIndex] : null;
+        const hits = Array.isArray(search?.hits) ? search.hits : [];
+        hits.forEach((_hit, hitIndex) => {
+          const key = `${searchIndex}:${hitIndex}`;
+          if (sectionToggle.checked) {
+            selectedIntelxHitKeys.add(key);
+          } else {
+            selectedIntelxHitKeys.delete(key);
+          }
+        });
+        renderIntelx();
+        return;
+      }
+
+      const checkbox = closestAction(event.target, "toggle-intelx-hit-select");
+      if (!checkbox || !intelxTableRoot.contains(checkbox)) {
+        return;
+      }
+      const key = checkbox.getAttribute("data-hit-key");
+      if (!key) {
+        return;
+      }
+      if (checkbox.checked) {
+        selectedIntelxHitKeys.add(String(key));
+      } else {
+        selectedIntelxHitKeys.delete(String(key));
+      }
+      renderIntelx();
     });
 
     runPassiveAllBtn.addEventListener("click", () => {
       void queueAction(
         `/api/projects/${encodeURIComponent(projectId)}/scan`,
-        "Пассивный скан поставлен в очередь (all)",
+        "Полный скан поставлен в очередь",
         { scope: "all" },
-      );
-    });
-
-    runPassiveProviderBtn.addEventListener("click", () => {
-      const selectedSource = String(runPassiveProviderSelect.value || "").trim();
-      if (!selectedSource) {
-        setActionMessage("Сначала выберите провайдера", "error");
-        return;
-      }
-
-      void queueAction(
-        `/api/projects/${encodeURIComponent(projectId)}/scan`,
-        `Пассивный скан поставлен в очередь (провайдер: ${selectedSource})`,
-        { scope: `provider:${selectedSource}` },
       );
     });
 
@@ -2765,28 +3450,83 @@
       );
     });
 
+    runsExportCsvBtn.addEventListener("click", exportRunsCsv);
+    subdomainsExportTableCsvBtn.addEventListener("click", exportSubdomainsTableCsv);
+    whoisExportCsvBtn.addEventListener("click", exportWhoisCsv);
+    vtDeepExportCsvBtn.addEventListener("click", exportVtDeepCsv);
+    webarchiveExportCsvBtn.addEventListener("click", exportWebArchiveCsv);
+    dorkStatsExportCsvBtn.addEventListener("click", exportDorkStatsCsv);
+    intelxExportCsvBtn.addEventListener("click", exportIntelxCsv);
+
+    function openDork(engine, query) {
+      if (!primaryDomain || !query) {
+        setActionMessage("Добавьте домен в проект для открытия дорка", "error");
+        return;
+      }
+
+      const url = engine === "yandex"
+        ? `https://yandex.ru/search/?text=${encodeURIComponent(query)}`
+        : `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+
+    openGoogleDorkBtn.addEventListener("click", () => {
+      openDork("google", `site:${primaryDomain}`);
+    });
+
+    openGoogleSubdomainDorkBtn.addEventListener("click", () => {
+      openDork("google", `site:*.${primaryDomain}`);
+    });
+
+    openYandexDorkBtn.addEventListener("click", () => {
+      openDork("yandex", `site:${primaryDomain}`);
+    });
+
+    openYandexSubdomainDorkBtn.addEventListener("click", () => {
+      openDork("yandex", `site:*.${primaryDomain}`);
+    });
+
+    if (subdomainsSearchInput) {
+      subdomainsSearchInput.addEventListener("input", () => {
+        scheduleSubdomainsSearchFilter();
+      });
+    }
+
     tabSubdomainsBtn.addEventListener("click", () => {
       activeDataTab = "subdomains";
       renderDataTab();
+      renderActiveDataTabContent();
     });
 
     tabWhoisBtn.addEventListener("click", () => {
       activeDataTab = "whois";
       renderDataTab();
+      renderActiveDataTabContent();
       void refreshWhoisInfo();
     });
 
     tabWebarchiveBtn.addEventListener("click", () => {
       activeDataTab = "webarchive";
       renderDataTab();
+      renderActiveDataTabContent();
       if (!webarchiveData) {
         void refreshWebArchiveInfo();
+      }
+    });
+
+    tabDorkStatsBtn.addEventListener("click", () => {
+      activeDataTab = "dorkStats";
+      renderDataTab();
+      renderActiveDataTabContent();
+      if (!dorkStatsData) {
+        void refreshDorkStatsInfo();
       }
     });
 
     tabEmailsBtn.addEventListener("click", () => {
       activeDataTab = "emails";
       renderDataTab();
+      renderActiveDataTabContent();
       if (!emailData) {
         void refreshEmailsInfo();
       }
@@ -2795,6 +3535,7 @@
     tabVtDeepBtn.addEventListener("click", () => {
       activeDataTab = "vtdeep";
       renderDataTab();
+      renderActiveDataTabContent();
       if (!vtDeepData) {
         void refreshVtDeepInfo();
       }
@@ -2803,6 +3544,7 @@
     tabIntelxBtn.addEventListener("click", () => {
       activeDataTab = "intelx";
       renderDataTab();
+      renderActiveDataTabContent();
       if (!intelxData) {
         void refreshIntelxInfo();
       }
@@ -2828,6 +3570,14 @@
       void queueAction(
         `/api/projects/${encodeURIComponent(projectId)}/webarchive-metadata-task`,
         "Переизвлечение метаданных WebArchive поставлено в очередь",
+        {},
+      );
+    });
+
+    dorkStatsLoadBtn.addEventListener("click", () => {
+      void queueAction(
+        `/api/projects/${encodeURIComponent(projectId)}/dork-stats-task`,
+        "Сбор статистики дорков поставлен в очередь",
         {},
       );
     });
@@ -2955,6 +3705,18 @@
         body.customQuery ? "Задача IntelX с кастомным запросом поставлена в очередь" : "Задача IntelX поставлена в очередь",
         body,
       );
+    });
+
+    intelxEditSelectedBtn.addEventListener("click", () => {
+      if (selectedIntelxHitKeys.size !== 1) {
+        setIntelxMessage("Выберите одну IntelX строку для изменения", "error");
+        return;
+      }
+      void editIntelxHit(Array.from(selectedIntelxHitKeys)[0]);
+    });
+
+    intelxDeleteSelectedBtn.addEventListener("click", () => {
+      void deleteIntelxHits(Array.from(selectedIntelxHitKeys));
     });
 
     runResolveFastBtn.addEventListener("click", () => {
@@ -3221,10 +3983,6 @@
     runsTimelineSignature = "";
     renderRuns(true);
     renderSubdomains();
-    renderVtDeep();
-    renderWebArchive();
-    renderEmails();
-    renderIntelx();
     renderDataTab();
     void refreshSubdomains(true).catch((error) => {
       if (disposed) {
@@ -3260,6 +4018,12 @@
       disposed = true;
       if (runsRenderUnlockTimer) {
         clearTimeout(runsRenderUnlockTimer);
+      }
+      if (subdomainsFilterTimer) {
+        clearTimeout(subdomainsFilterTimer);
+      }
+      if (subdomainsFilterFrame) {
+        cancelAnimationFrame(subdomainsFilterFrame);
       }
       if (timelineClusterize && typeof timelineClusterize.destroy === "function") {
         timelineClusterize.destroy(true);
@@ -3355,7 +4119,7 @@
                       <div class="intelx-block-head">
                         <strong>Действия</strong>
                       </div>
-                      <div class="row wrap intelx-actions-row" style="margin-top:0">
+                  <div class="row row-no-margin wrap intelx-actions-row">
                         <button class="btn btn-primary provider-save" type="button">Сохранить</button>
                         <button class="btn btn-ghost provider-clear" type="button">Очистить</button>
                         <button class="btn btn-ghost provider-check-limit" type="button">Проверить токены</button>
@@ -3372,7 +4136,7 @@
                   </div>
                 `
                 : `
-                  <div class="row wrap" style="margin-top:0">
+                  <div class="row row-no-margin wrap">
                     <button class="btn btn-primary provider-save" type="button">Сохранить</button>
                     <button class="btn btn-ghost provider-clear" type="button">Очистить токен</button>
                     <button class="btn btn-ghost provider-check-limit" type="button">Проверить лимит</button>
@@ -3607,7 +4371,7 @@
               <div class="hint mono">${escapeHtml(user.id)}</div>
             </td>
             <td>
-              <select class="text-input user-role" style="min-width:120px">
+              <select class="text-input user-role user-role-select">
                 <option value="USER" ${user.role === "USER" ? "selected" : ""}>USER</option>
                 <option value="ADMIN" ${user.role === "ADMIN" ? "selected" : ""}>ADMIN</option>
               </select>
@@ -3622,7 +4386,7 @@
               <input class="text-input user-password" type="password" minlength="8" placeholder="Новый пароль (необязательно)" />
             </td>
             <td>
-              <div class="row wrap" style="margin-top:0">
+              <div class="row row-no-margin wrap">
                 <button class="btn btn-primary user-update" type="button">Обновить</button>
                 <button class="btn btn-danger user-delete" type="button">Удалить</button>
               </div>
@@ -3912,6 +4676,6 @@
     showPopup(message, kind, options);
   };
 
-  applyUiMode(state.uiMode, { skipPersist: true });
+  applyUi({ skipPersist: true });
   void renderRoute();
 })();

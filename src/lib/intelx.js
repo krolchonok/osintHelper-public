@@ -160,7 +160,7 @@ function createIntelxClient(rawToken) {
     return Array.isArray(payload?.records) ? payload.records : [];
   }
 
-  async function fetchFileAndFind(searchTerm, storageid, bucket) {
+  async function fetchFileText(storageid, bucket) {
     let attempts = 0;
     const maxAttempts = apiKeys.length;
 
@@ -180,12 +180,7 @@ function createIntelxClient(rawToken) {
             "x-key": currentKey,
           },
         });
-        const text = await response.text();
-        const loweredNeedle = searchTerm.toLowerCase();
-        return text
-          .split(/\r?\n/)
-          .map((line) => String(line || "").trim())
-          .filter((line) => line && line.toLowerCase().includes(loweredNeedle));
+        return await response.text();
       } catch (error) {
         attempts += 1;
         if (isRateLimitError(error) && attempts < maxAttempts) {
@@ -197,6 +192,24 @@ function createIntelxClient(rawToken) {
     }
 
     throw new Error(`IntelX limits exhausted for ${maskIntelxKey(getCurrentApiKey())}`);
+  }
+
+  async function fetchFileAndFind(searchTerm, record) {
+    const storageid = String(record?.storageid || "").trim();
+    const bucket = String(record?.bucket || "leaks.public.general").trim() || "leaks.public.general";
+    const text = await fetchFileText(storageid, bucket);
+    const loweredNeedle = searchTerm.toLowerCase();
+    const fileName = getIntelxRecordFileName(record);
+    return text
+      .split(/\r?\n/)
+      .map((line) => String(line || "").trim())
+      .filter((line) => line && line.toLowerCase().includes(loweredNeedle))
+      .map((line) => ({
+        line,
+        storageid,
+        bucket,
+        fileName,
+      }));
   }
 
   async function runWithConcurrency(tasks, concurrency = MAX_CONCURRENCY) {
@@ -234,8 +247,7 @@ function createIntelxClient(rawToken) {
         continue;
       }
       seenStorageIds.add(storageid);
-      const bucket = record?.bucket || "leaks.public.general";
-      jobs.push(() => fetchFileAndFind(searchTerm, storageid, bucket));
+      jobs.push(() => fetchFileAndFind(searchTerm, record));
     }
 
     if (!jobs.length) {
@@ -248,7 +260,7 @@ function createIntelxClient(rawToken) {
     }
 
     const results = await runWithConcurrency(jobs, MAX_CONCURRENCY);
-    const uniqueHits = new Set();
+    const uniqueHits = new Map();
     const warnings = [];
 
     for (const row of results) {
@@ -258,8 +270,23 @@ function createIntelxClient(rawToken) {
         }
         continue;
       }
-      for (const line of row) {
-        uniqueHits.add(line);
+      for (const hit of row) {
+        const line = String(hit?.line || "").trim();
+        const storageid = String(hit?.storageid || "").trim();
+        const bucket = String(hit?.bucket || "leaks.public.general").trim();
+        const fileName = String(hit?.fileName || "").trim();
+        if (!line) {
+          continue;
+        }
+        const key = [storageid, bucket, line].join("|");
+        if (!uniqueHits.has(key)) {
+          uniqueHits.set(key, {
+            line,
+            storageid,
+            bucket,
+            fileName,
+          });
+        }
       }
     }
 
@@ -268,7 +295,7 @@ function createIntelxClient(rawToken) {
     }
 
     return {
-      hits: Array.from(uniqueHits),
+      hits: Array.from(uniqueHits.values()),
       warnings: Array.from(new Set(warnings)),
     };
   }
@@ -277,8 +304,30 @@ function createIntelxClient(rawToken) {
     apiKeyCount: apiKeys.length,
     getCurrentApiKey,
     searchLeaks,
+    fetchFileText,
     fetchWithRetry,
   };
+}
+
+function getIntelxRecordFileName(record) {
+  const candidates = [
+    record?.name,
+    record?.file?.name,
+    record?.filename,
+    record?.title,
+    record?.caption,
+    record?.systemid,
+    record?.storageid,
+  ];
+
+  for (const value of candidates) {
+    const normalized = String(value || "").trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
 }
 
 async function fetchIntelxAccountInfo(rawToken) {

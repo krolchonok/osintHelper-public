@@ -9,6 +9,7 @@ const { createId, nowIso } = require("../lib/utils");
 const { SUPPORTED_PASSIVE_SOURCE_IDS } = require("../lib/passive-scan");
 const { fetchDomainWhois: fetchDomainWhoisLib } = require("../lib/whois");
 const { getProviderRuntimeSettings } = require("../lib/provider-settings");
+const { createIntelxClient } = require("../lib/intelx");
 const {
   getPrimaryProjectDomain,
   getProjectScopeDomains,
@@ -453,6 +454,51 @@ function saveCachedIntelxLeaks(projectId, result) {
   `).run(projectId, JSON.stringify(result || {}), "intelx", now, now);
 }
 
+function normalizeIntelxHitRef(raw) {
+  const searchIndex = Number.parseInt(String(raw?.searchIndex ?? ""), 10);
+  const hitIndex = Number.parseInt(String(raw?.hitIndex ?? ""), 10);
+  if (!Number.isInteger(searchIndex) || searchIndex < 0 || !Number.isInteger(hitIndex) || hitIndex < 0) {
+    return null;
+  }
+  return { searchIndex, hitIndex };
+}
+
+function normalizeIntelxCachedResult(raw) {
+  const data = raw && typeof raw === "object" ? { ...raw } : {};
+  const searches = Array.isArray(data.searches) ? data.searches : [];
+  let totalHits = 0;
+
+  data.searches = searches.map((entry) => {
+    const nextEntry = entry && typeof entry === "object" ? { ...entry } : {};
+    const hits = Array.isArray(nextEntry.hits) ? nextEntry.hits : [];
+    nextEntry.hits = hits.filter((hit) => hit && typeof hit === "object");
+    nextEntry.count = nextEntry.hits.length;
+    totalHits += nextEntry.hits.length;
+    return nextEntry;
+  });
+
+  data.summary = {
+    ...(data.summary && typeof data.summary === "object" ? data.summary : {}),
+    searches: data.searches.length,
+    hits: totalHits,
+  };
+
+  return data;
+}
+
+function updateCachedIntelxLeaks(projectId, mutator) {
+  const cached = getCachedIntelxLeaks(projectId);
+  if (!cached) {
+    const error = new Error("No IntelX data yet");
+    error.status = 404;
+    throw error;
+  }
+
+  const next = normalizeIntelxCachedResult(mutator(structuredClone(cached)));
+  saveCachedIntelxLeaks(projectId, next);
+  return getCachedIntelxLeaks(projectId);
+}
+
 function getCachedWebArchive(projectId) {
   const { db } = getDbState();
   const row = db
@@ -466,6 +512,26 @@ function getCachedWebArchive(projectId) {
     return {
       ...data,
       source: row.source || data.source || "waybackarchive",
+      cachedAt: row.updated_at || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getCachedDorkStats(projectId) {
+  const { db } = getDbState();
+  const row = db
+    .prepare("SELECT data_json, source, updated_at FROM project_dork_stats WHERE project_id = ? LIMIT 1")
+    .get(projectId);
+  if (!row || !row.data_json) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(row.data_json);
+    return {
+      ...data,
+      source: row.source || data.source || "dork-stats",
       cachedAt: row.updated_at || null,
     };
   } catch {
@@ -516,6 +582,7 @@ function collectProjectEmails(projectId) {
         sources: new Set(),
         intelxTerms: new Set(),
         intelxSnippets: new Set(),
+        intelxFiles: new Map(),
         webarchiveHosts: new Set(),
         webarchiveAuthors: new Set(),
         webarchiveEditors: new Set(),
@@ -582,6 +649,18 @@ function collectProjectEmails(projectId) {
           if (line) {
             entry.intelxSnippets.add(line);
           }
+          const storageid = String(hit?.storageid || "").trim();
+          const bucket = String(hit?.bucket || "").trim();
+          if (storageid) {
+            const fileKey = `${storageid}|${bucket || "leaks.public.general"}`;
+            if (!entry.intelxFiles.has(fileKey)) {
+              entry.intelxFiles.set(fileKey, {
+                storageid,
+                bucket: bucket || "leaks.public.general",
+                term: term || "",
+              });
+            }
+          }
         }
       }
     }
@@ -640,6 +719,7 @@ function collectProjectEmails(projectId) {
       sources: Array.from(item.sources).sort(),
       intelxTerms: Array.from(item.intelxTerms).sort(),
       intelxSnippets: Array.from(item.intelxSnippets).slice(0, 5),
+      intelxFiles: Array.from(item.intelxFiles.values()).slice(0, 10),
       webarchiveHosts: Array.from(item.webarchiveHosts).sort(),
       webarchiveAuthors: Array.from(item.webarchiveAuthors).sort(),
       webarchiveEditors: Array.from(item.webarchiveEditors).sort(),
@@ -670,6 +750,7 @@ function collectProjectEmails(projectId) {
           sources: ["manual"],
           intelxTerms: [],
           intelxSnippets: [],
+          intelxFiles: [],
           webarchiveHosts: [],
           webarchiveAuthors: [],
           webarchiveEditors: [],
@@ -1167,6 +1248,7 @@ router.get("/:id", requireApiUser(), (req, res) => {
   const whois = getCachedWhois(id);
   const intelx = getCachedIntelxLeaks(id);
   const webarchive = getCachedWebArchive(id);
+  const dorkStats = getCachedDorkStats(id);
   const emails = collectProjectEmails(id);
 
   res.json({
@@ -1176,6 +1258,7 @@ router.get("/:id", requireApiUser(), (req, res) => {
       whois,
       intelx,
       webarchive,
+      dorkStats,
       emails,
     }),
   });
@@ -1772,6 +1855,148 @@ router.get("/:id/intelx-leaks", requireApiUser(), async (req, res) => {
   });
 });
 
+router.put("/:id/intelx-leaks/hit", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const ref = normalizeIntelxHitRef(req.body);
+  if (!ref) {
+    res.status(400).json({ error: "Invalid IntelX hit reference" });
+    return;
+  }
+
+  const nextLine = String(req.body?.line ?? "").trim();
+  const nextFileName = String(req.body?.fileName ?? "").trim();
+  if (!nextLine) {
+    res.status(400).json({ error: "IntelX hit line is required" });
+    return;
+  }
+
+  try {
+    const result = updateCachedIntelxLeaks(id, (data) => {
+      const search = Array.isArray(data.searches) ? data.searches[ref.searchIndex] : null;
+      const hit = search && Array.isArray(search.hits) ? search.hits[ref.hitIndex] : null;
+      if (!hit) {
+        const error = new Error("IntelX hit not found");
+        error.status = 404;
+        throw error;
+      }
+      hit.line = nextLine;
+      if (nextFileName) {
+        hit.fileName = nextFileName;
+      } else {
+        delete hit.fileName;
+      }
+      return data;
+    });
+    res.json({ ok: true, result });
+  } catch (error) {
+    res.status(error.status || 400).json({ error: error instanceof Error ? error.message : "Failed to update IntelX hit" });
+  }
+});
+
+router.post("/:id/intelx-leaks/delete", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const refs = Array.isArray(req.body?.hits)
+    ? req.body.hits.map(normalizeIntelxHitRef).filter(Boolean)
+    : [];
+  const uniqueRefs = Array.from(
+    new Map(refs.map((ref) => [`${ref.searchIndex}:${ref.hitIndex}`, ref])).values(),
+  );
+  if (!uniqueRefs.length) {
+    res.status(400).json({ error: "No IntelX hits selected" });
+    return;
+  }
+
+  try {
+    const result = updateCachedIntelxLeaks(id, (data) => {
+      const bySearch = new Map();
+      for (const ref of uniqueRefs) {
+        if (!bySearch.has(ref.searchIndex)) {
+          bySearch.set(ref.searchIndex, new Set());
+        }
+        bySearch.get(ref.searchIndex).add(ref.hitIndex);
+      }
+
+      for (const [searchIndex, hitIndexes] of bySearch.entries()) {
+        const search = Array.isArray(data.searches) ? data.searches[searchIndex] : null;
+        if (!search || !Array.isArray(search.hits)) {
+          continue;
+        }
+        search.hits = search.hits.filter((_hit, hitIndex) => !hitIndexes.has(hitIndex));
+      }
+      return data;
+    });
+    res.json({ ok: true, deleted: uniqueRefs.length, result });
+  } catch (error) {
+    res.status(error.status || 400).json({ error: error instanceof Error ? error.message : "Failed to delete IntelX hits" });
+  }
+});
+
+router.get("/:id/intelx-file", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const storageid = String(req.query?.storageid || "").trim();
+  const bucket = String(req.query?.bucket || "leaks.public.general").trim() || "leaks.public.general";
+  if (!storageid) {
+    res.status(400).json({ error: "Missing storageid" });
+    return;
+  }
+
+  const cached = getCachedIntelxLeaks(project.id);
+  const allowed = Boolean(
+    cached &&
+      Array.isArray(cached.searches) &&
+      cached.searches.some((search) =>
+        Array.isArray(search?.hits) &&
+        search.hits.some(
+          (hit) =>
+            String(hit?.storageid || "").trim() === storageid &&
+            String(hit?.bucket || "leaks.public.general").trim() === bucket,
+        ),
+      ),
+  );
+
+  if (!allowed) {
+    res.status(404).json({ error: "IntelX file is not available in saved project results" });
+    return;
+  }
+
+  const settings = new Map(getProviderRuntimeSettings().map((item) => [item.provider, item]));
+  const intelx = settings.get("intelx");
+  if (!intelx || !intelx.enabled || !intelx.token) {
+    res.status(400).json({ error: "IntelX provider is disabled or token is missing" });
+    return;
+  }
+
+  try {
+    const client = createIntelxClient(intelx.token);
+    const text = await client.fetchFileText(storageid, bucket);
+    res.type("text/plain; charset=utf-8").send(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load IntelX file";
+    res.status(400).json({ error: message });
+  }
+});
+
 router.get("/:id/webarchive", requireApiUser(), async (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
@@ -1792,6 +2017,51 @@ router.get("/:id/webarchive", requireApiUser(), async (req, res) => {
     cached: false,
     message: "No WebArchive data yet. Start the WebArchive task to collect and save results.",
   });
+});
+
+router.get("/:id/dork-stats", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const cached = getCachedDorkStats(project.id);
+  if (cached) {
+    res.json({ result: cached, cached: true });
+    return;
+  }
+
+  res.json({
+    result: null,
+    cached: false,
+    message: "No dork stats yet. Start the dork stats task to collect and save results.",
+  });
+});
+
+router.post("/:id/dork-stats-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", {
+    scanScope: "dorks",
+    taskKind: "DORK_STATS",
+  });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "DORK_STATS",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "DORK_STATS" });
 });
 
 router.get("/:id/emails", requireApiUser(), async (req, res) => {
