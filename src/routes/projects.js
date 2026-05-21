@@ -1756,6 +1756,57 @@ router.post("/:id/scan", requireApiUser(), (req, res) => {
   enqueueRun(req, res, "PASSIVE_SCAN");
 });
 
+router.post("/:id/scan-selected", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const scanScope = parsePassiveScanScope(req.body?.scope);
+  if (!scanScope || !scanScope.startsWith("provider:")) {
+    res.status(400).json({ error: "Invalid provider scope. Use provider:<id>." });
+    return;
+  }
+
+  const rawIds = Array.isArray(req.body?.subdomainIds) ? req.body.subdomainIds : [];
+  const subdomainIds = Array.from(new Set(rawIds.map((item) => String(item || "").trim()).filter(Boolean)));
+  if (!subdomainIds.length) {
+    res.status(400).json({ error: "No subdomains selected" });
+    return;
+  }
+
+  const placeholders = subdomainIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(`SELECT id, host FROM subdomains WHERE project_id = ? AND id IN (${placeholders})`)
+    .all(id, ...subdomainIds);
+  if (!rows.length) {
+    res.status(400).json({ error: "Selected subdomains are not found in project" });
+    return;
+  }
+
+  const validIds = rows.map((row) => row.id);
+  const targetDomains = rows.map((row) => normalizeHostInput(row.host)).filter(Boolean);
+  const providerId = scanScope.slice("provider:".length);
+  const run = startRun(id, "PASSIVE_SCAN", {
+    scanScope,
+    taskKind: "PASSIVE_SCAN_SELECTED",
+    taskPayload: { subdomainIds: validIds, targetDomains },
+  });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "PASSIVE_SCAN_SELECTED",
+    taskPayload: { subdomainIds: validIds, targetDomains },
+  });
+
+  res.json({ ok: true, runId: run.id, scanScope: run.scanScope, provider: providerId, selected: validIds.length });
+});
+
 router.get("/:id/passive-sources", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
@@ -2050,9 +2101,15 @@ router.post("/:id/dork-stats-task", requireApiUser(), (req, res) => {
     return;
   }
 
+  let engines = ["google", "yandex", "duckduckgo"];
+  if (Array.isArray(req.body?.engines)) {
+    engines = req.body.engines.filter(e => e === "google" || e === "yandex" || e === "duckduckgo");
+  }
+
   const run = startRun(id, "PASSIVE_SCAN", {
     scanScope: "dorks",
     taskKind: "DORK_STATS",
+    taskPayload: { engines },
   });
   enqueueScanJob({
     runId: run.id,
@@ -2060,8 +2117,289 @@ router.post("/:id/dork-stats-task", requireApiUser(), (req, res) => {
     type: "PASSIVE_SCAN",
     scanScope: run.scanScope,
     taskKind: "DORK_STATS",
+    taskPayload: { engines },
   });
   res.json({ ok: true, runId: run.id, taskKind: "DORK_STATS" });
+});
+
+router.delete("/:id/dork-stats", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  db.prepare("DELETE FROM project_dork_stats WHERE project_id = ?").run(id);
+  res.json({ ok: true });
+});
+
+router.get("/:id/dork-captcha", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const { runId, engine } = req.query;
+
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).send("Project not found");
+    return;
+  }
+
+  const session = db.prepare("SELECT * FROM dork_captcha_sessions WHERE run_id = ? AND engine = ?").get(runId, engine);
+  if (!session) {
+    res.status(404).send("Captcha session not found or already expired");
+    return;
+  }
+
+  // Set the initial session cookies saved by the worker
+  if (session.cookies) {
+    const cookiesList = session.cookies.split(";");
+    for (const cookie of cookiesList) {
+      const trimmed = cookie.trim();
+      if (trimmed && trimmed.includes("=")) {
+        res.append("Set-Cookie", trimmed);
+      }
+    }
+  }
+
+  let html = session.captcha_html;
+  const submitUrl = `${req.protocol}://${req.get('host')}/api/projects/${id}/dork-captcha/submit?runId=${runId}&engine=${engine}`;
+  const baseHref = engine === "yandex"
+    ? "https://yandex.ru/"
+    : engine === "duckduckgo"
+      ? "https://duckduckgo.com/html/"
+      : "https://www.google.com/";
+
+  // Add base href tag right after <head> to load assets
+  html = html.replace(/<head>/i, `<head><base href="${baseHref}">`);
+
+  // For DuckDuckGo, rewrite relative challenge asset paths to our proxy path
+  if (engine === "duckduckgo") {
+    html = html.replace(/\.\.\/assets\/anomaly\//g, "/assets/anomaly/");
+  }
+
+  // Replace form action attributes with our absolute submit path
+  html = html.replace(/action=(["'])([^"'\s>]+)\1/gi, (match, quote, action) => {
+    if (action.startsWith("/") || action.includes("checkcaptcha") || action.includes("sorry") || action.includes("anomaly")) {
+      const separator = submitUrl.includes("?") ? "&" : "?";
+      return `action="${submitUrl}${separator}original_action=${encodeURIComponent(action)}"`;
+    }
+    return match;
+  });
+
+  res.send(html);
+});
+
+router.all("/:id/dork-captcha/submit", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const { runId, engine, original_action } = req.query;
+
+  const params = { ...req.query, ...req.body };
+  delete params.runId;
+  delete params.engine;
+  delete params.original_action;
+
+  const session = db.prepare("SELECT * FROM dork_captcha_sessions WHERE run_id = ? AND engine = ?").get(runId, engine);
+  if (!session) {
+    res.status(404).send("Session not found");
+    return;
+  }
+
+  const clientCookies = req.headers["cookie"] || "";
+  const cleanedCookies = clientCookies
+    .split(";")
+    .map(c => c.trim())
+    .filter(c => c && !c.startsWith("token=") && !c.startsWith("recon_session="))
+    .join("; ");
+
+  const targetHost = engine === "yandex"
+    ? "https://yandex.ru"
+    : engine === "duckduckgo"
+      ? "https://duckduckgo.com"
+      : "https://www.google.com";
+  let submitPath = original_action || (
+    engine === "yandex"
+      ? "/checkcaptcha"
+      : engine === "duckduckgo"
+        ? "/html/"
+        : "/sorry/index"
+  );
+  if (!submitPath.startsWith("/") && !submitPath.startsWith("http")) {
+    submitPath = "/" + submitPath;
+  }
+
+  const url = new URL(submitPath, targetHost);
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, v);
+  }
+
+  try {
+    const fetchHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ru,en;q=0.8",
+    };
+    if (cleanedCookies) {
+      fetchHeaders["Cookie"] = cleanedCookies;
+    }
+
+    let body = undefined;
+    if (req.method === "POST") {
+      const bodyParams = new URLSearchParams();
+      for (const [k, v] of Object.entries(req.body || {})) {
+        bodyParams.append(k, v);
+      }
+      body = bodyParams.toString();
+      fetchHeaders["Content-Type"] = "application/x-www-form-urlencoded";
+    }
+
+    const response = await fetch(url.toString(), {
+      method: req.method,
+      headers: fetchHeaders,
+      body,
+      redirect: "manual",
+    });
+
+    const rawCookies = response.headers.getSetCookie ? response.headers.getSetCookie() : response.headers.get("set-cookie");
+    const cookieHeader = Array.isArray(rawCookies) ? rawCookies.join("; ") : String(rawCookies || "");
+    const parsedCookies = [];
+    if (cookieHeader) {
+      const parts = cookieHeader.split(/,(?=[^;]*=)/);
+      for (const part of parts) {
+        const cookiePair = part.split(";")[0].trim();
+        if (cookiePair && cookiePair.includes("=")) {
+          parsedCookies.push(cookiePair);
+        }
+      }
+    }
+    const newCookies = parsedCookies.join("; ");
+
+    const cookieMap = new Map();
+    const parseStr = (str) => {
+      if (!str) return;
+      str.split(";").forEach(part => {
+        const trimmed = part.trim();
+        if (!trimmed || !trimmed.includes("=")) return;
+        const eqIdx = trimmed.indexOf("=");
+        const k = trimmed.slice(0, eqIdx).trim();
+        const v = trimmed.slice(eqIdx + 1).trim();
+        if (k) cookieMap.set(k, v);
+      });
+    };
+    parseStr(cleanedCookies);
+    parseStr(newCookies);
+
+    let finalResponse = response;
+    let responseHtml = "";
+
+    if (response.status === 302 || response.status === 301) {
+      const location = response.headers.get("location");
+      if (location) {
+        const redirectUrl = new URL(location, targetHost);
+        const nextHeaders = { ...fetchHeaders };
+        const combinedRedirectCookies = Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
+        if (combinedRedirectCookies) {
+          nextHeaders["Cookie"] = combinedRedirectCookies;
+        }
+        const redirectResponse = await fetch(redirectUrl.toString(), {
+          method: "GET",
+          headers: nextHeaders,
+          redirect: "manual",
+        });
+        finalResponse = redirectResponse;
+
+        const redirectRawCookies = redirectResponse.headers.getSetCookie ? redirectResponse.headers.getSetCookie() : redirectResponse.headers.get("set-cookie");
+        const redirectCookieHeader = Array.isArray(redirectRawCookies) ? redirectRawCookies.join("; ") : String(redirectRawCookies || "");
+        const redirectParsed = [];
+        if (redirectCookieHeader) {
+          const parts = redirectCookieHeader.split(/,(?=[^;]*=)/);
+          for (const part of parts) {
+            const cookiePair = part.split(";")[0].trim();
+            if (cookiePair && cookiePair.includes("=")) {
+              redirectParsed.push(cookiePair);
+            }
+          }
+        }
+        if (redirectParsed.length) {
+          const redirectNewCookies = redirectParsed.join("; ");
+          parseStr(redirectNewCookies);
+        }
+        
+        responseHtml = await redirectResponse.text();
+      }
+    } else {
+      responseHtml = await response.text();
+    }
+
+    const savedCookies = Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join("; ");
+
+    if (savedCookies || finalResponse.status === 302 || finalResponse.status === 301 || finalResponse.status === 200 || finalResponse.status === 202) {
+      db.prepare(`
+        UPDATE dork_captcha_sessions
+        SET status = 'RESOLVED', cookies = ?, resolved_html = ?, resolved_at = ?
+        WHERE run_id = ? AND engine = ?
+      `).run(savedCookies || "", responseHtml || "", nowIso(), runId, engine);
+
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Капча решена</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121214; color: #e1e1e6; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .card { background: #1a1a1e; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); text-align: center; max-width: 400px; border: 1px solid #2a2a30; }
+            h1 { color: #4caf50; margin-top: 0; }
+            p { color: #a0a0a8; line-height: 1.5; }
+            .btn { display: inline-block; background: #3b82f6; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; margin-top: 1rem; cursor: pointer; border: none; }
+            .btn:hover { background: #2563eb; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>Успешно!</h1>
+            <p>Решение передано. Задача сканирования на сервере продолжится автоматически.</p>
+            <p>Вы можете закрыть эту вкладку.</p>
+            <button class="btn" onclick="window.close()">Закрыть вкладку</button>
+          </div>
+          <script>
+            setTimeout(() => {
+              window.close();
+            }, 3000);
+          </script>
+        </body>
+        </html>
+      `);
+    } else {
+      const responseHtml = await response.text();
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Ошибка решения капчи</title>
+          <style>
+            body { font-family: sans-serif; background: #121214; color: #e1e1e6; padding: 2rem; }
+            .error { color: #f43f5e; font-weight: bold; }
+            a { color: #3b82f6; }
+          </style>
+        </head>
+        <body>
+          <h2>Не удалось подтвердить решение капчи.</h2>
+          <p class="error">Пожалуйста, попробуйте отправить форму еще раз.</p>
+          <p><a href="/api/projects/${id}/dork-captcha?runId=${runId}&engine=${engine}">Попробовать еще раз</a></p>
+          <hr>
+          <h3>Ответ поисковика (HTTP ${response.status}):</h3>
+          <div>${responseHtml ? responseHtml.slice(0, 1000) : "Пустой ответ"}</div>
+        </body>
+        </html>
+      `);
+    }
+  } catch (error) {
+    res.status(500).send(`Ошибка при отправке решения: ${error.message}`);
+  }
 });
 
 router.get("/:id/emails", requireApiUser(), async (req, res) => {
@@ -2269,6 +2607,47 @@ router.post("/:id/webarchive-metadata-task", requireApiUser(), (req, res) => {
     taskKind: "WEBARCHIVE_METADATA",
   });
   res.json({ ok: true, runId: run.id, taskKind: "WEBARCHIVE_METADATA" });
+});
+
+router.get("/:id/asn", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const row = db.prepare("SELECT data_json, updated_at FROM project_asn WHERE project_id = ? LIMIT 1").get(id);
+  if (!row) {
+    res.json({ result: null });
+    return;
+  }
+  let data;
+  try {
+    data = JSON.parse(row.data_json);
+  } catch {
+    data = null;
+  }
+  res.json({ result: data, updatedAt: row.updated_at });
+});
+
+router.post("/:id/asn-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "ASN" });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "ASN",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "ASN" });
 });
 
 router.post("/:id/whois-task", requireApiUser(), (req, res) => {

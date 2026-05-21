@@ -32,6 +32,21 @@
   const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
   const SUBDOMAINS_PAGE_SIZES = [100, 250, 500];
   const DEFAULT_SUBDOMAINS_PAGE_SIZE = SUBDOMAINS_PAGE_SIZES[0];
+  const SELECTED_SCAN_PROVIDERS = [
+    ["netlas", "Netlas"],
+    ["virustotal", "VirusTotal"],
+    ["shodan", "Shodan"],
+    ["securitytrails", "SecurityTrails"],
+    ["urlscan", "urlscan"],
+    ["fullhunt", "FullHunt"],
+    ["bevigil", "BeVigil"],
+    ["bufferover", "BufferOver"],
+    ["whoisxmlapi", "WhoisXMLAPI"],
+    ["threatbook", "ThreatBook"],
+    ["reconeer", "Reconeer"],
+    ["dork-google-api", "Google CSE"],
+    ["dork-yandex-api", "Yandex Search API"],
+  ];
   const DEBOUNCE_FAST_MS = 120;
   const ICON_EDIT = `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -795,9 +810,12 @@
     const cards = projects
       .map((project, index) => {
         const lastRun = project.lastRun;
-        const status = lastRun
+        const statusText = lastRun
           ? `${escapeHtml(lastRun.type)} · ${escapeHtml(lastRun.status)}`
           : "Нет запусков";
+        const statusClass = lastRun
+          ? { RUNNING: "pill-running", QUEUED: "pill-queued", FAILED: "pill-failed", DONE: "pill-done", SUCCESS: "pill-done", ERROR: "pill-failed", CANCELLED: "pill-failed" }[lastRun.status] || "pill-done"
+          : "";
         const subdomainsCount = Number(project.counts && project.counts.subdomains) || 0;
         const runsCount = Number(project.counts && project.counts.runs) || 0;
         const reviewMinutes = Math.max(1, Math.ceil(subdomainsCount / 220));
@@ -805,8 +823,8 @@
         const domains = formatProjectDomains(project);
         const projectName = getProjectDisplayName(project);
         const lead = domains.length
-          ? `Покрытие для ${projectName}: пассивные источники, DNS-резолв и история запусков.`
-          : `Проект ${projectName} готов к наполнению доменами, сканами и сохранёнными результатами.`;
+          ? `Пассивные источники, DNS-резолв и история запусков.`
+          : `Готов к наполнению доменами, сканами и результатами.`;
         const domainsMeta = domains.length > 1
           ? `${domains.length} домена: ${domains.join(", ")}`
           : `${domains[0] || "Домен пока не добавлен"}`;
@@ -816,16 +834,31 @@
             <div class="project-card-main">
               <div class="meta">
                 <span>${escapeHtml(createdAt)}</span>
-                <span class="pill tiny">${status}</span>
+                <span class="pill tiny ${statusClass}">${statusText}</span>
               </div>
               <div class="project-title mono">${escapeHtml(projectName)}</div>
               <div class="project-lead">${escapeHtml(lead)}</div>
               <div class="hint mono">${escapeHtml(domainsMeta)}</div>
               <div class="project-insight">
-                ${subdomainsCount} активов • ${runsCount} запусков • ${reviewMinutes} мин на просмотр
+                ${subdomainsCount} активов · ${runsCount} запусков · ${reviewMinutes} мин на просмотр
               </div>
             </div>
-            <div class="project-preview" aria-hidden="true"></div>
+            <div class="project-preview" aria-hidden="true">
+              <div class="project-mini-stats">
+                <div class="project-mini-stat">
+                  <span class="project-mini-stat-value mono">${subdomainsCount}</span>
+                  <span class="project-mini-stat-label">поддоменов</span>
+                </div>
+                <div class="project-mini-stat">
+                  <span class="project-mini-stat-value mono">${runsCount}</span>
+                  <span class="project-mini-stat-label">запусков</span>
+                </div>
+                <div class="project-mini-stat">
+                  <span class="project-mini-stat-value mono">${reviewMinutes}</span>
+                  <span class="project-mini-stat-label">мин просмотр</span>
+                </div>
+              </div>
+            </div>
           </a>
         `;
       })
@@ -853,7 +886,7 @@
     appEl.innerHTML = `
       <div class="stack-xl">
         <section class="hero panel">
-          <h1>Passive Recon Management</h1>
+          <h1>Управление разведкой</h1>
           <p>Создавайте проект по названию, добавляйте домены внутри и запускайте сканы с сохранением результатов.</p>
         </section>
 
@@ -985,6 +1018,15 @@
           (run.status === "QUEUED" || run.status === "RUNNING") &&
           !Boolean(run.cancelRequested);
 
+        const isAwaitingCaptcha = run.stage && run.stage.toLowerCase().includes("awaiting captcha");
+        let captchaBtnHtml = "";
+        if (isAwaitingCaptcha) {
+          const match = run.stage.match(/awaiting captcha:\s*(\w+)/i);
+          const engine = match ? match[1].toLowerCase() : "google";
+          const captchaUrl = `/api/projects/${encodeURIComponent(run.projectId)}/dork-captcha?runId=${encodeURIComponent(run.id)}&engine=${encodeURIComponent(engine)}`;
+          captchaBtnHtml = `<a class="btn btn-warning" href="${captchaUrl}" target="_blank" style="margin-left: 5px;">Решить капчу ${escapeHtml(engine === "google" ? "Google" : "Yandex")}</a>`;
+        }
+
         return `
           <tr>
             <td>${escapeHtml(runTypeLabel)} <span class="pill tiny">${escapeHtml(scopeLabel)}</span></td>
@@ -1010,6 +1052,7 @@
               )}" data-action="select-run">
                 ${selected ? "Выбрано" : "Показать лог"}
               </button>
+              ${captchaBtnHtml}
               ${
                 canCancel
                   ? `<button class="btn btn-danger" data-run-id="${escapeHtml(run.id)}" data-action="cancel-run">Отменить</button>`
@@ -1608,6 +1651,77 @@
     `;
   }
 
+  function buildAsnTable(asnData) {
+    if (!asnData) {
+      return '<p class="hint">ASN-данные ещё не загружены. Нажмите «Запустить ASN-лукап».</p>';
+    }
+
+    const asns = Array.isArray(asnData.asns) ? asnData.asns : [];
+    const lookedUpAt = asnData.lookedUpAt ? formatDate(asnData.lookedUpAt) : "—";
+    const noAsnIps = Array.isArray(asnData.noAsnIps) ? asnData.noAsnIps : [];
+
+    const statsHtml = `
+      <div class="data-stat-grid" style="margin-bottom:14px">
+        <div class="data-stat-card">
+          <div class="data-stat-value mono">${escapeHtml(String(asnData.totalIps || 0))}</div>
+          <div class="data-stat-label">Всего IP</div>
+        </div>
+        <div class="data-stat-card">
+          <div class="data-stat-value mono">${escapeHtml(String(asnData.resolvedAsns || 0))}</div>
+          <div class="data-stat-label">ASN-зон</div>
+        </div>
+        <div class="data-stat-card">
+          <div class="data-stat-value mono">${escapeHtml(String(noAsnIps.length))}</div>
+          <div class="data-stat-label">Без ASN</div>
+        </div>
+      </div>
+    `;
+
+    if (!asns.length) {
+      return statsHtml + '<p class="hint">Не удалось определить ASN ни для одного IP.</p>';
+    }
+
+    const rows = asns.map((entry) => {
+      const ipsHtml = entry.ips
+        .map((ip) => `<span class="pill tiny mono">${escapeHtml(ip)}</span>`)
+        .join(" ");
+      const cidrsHtml = entry.cidrs && entry.cidrs.length
+        ? entry.cidrs.map((c) => `<span class="pill tiny mono">${escapeHtml(c)}</span>`).join(" ")
+        : "—";
+
+      return `
+        <tr>
+          <td class="mono"><strong>${escapeHtml(entry.asn || "—")}</strong></td>
+          <td>${escapeHtml(entry.org || "—")}</td>
+          <td>${escapeHtml(entry.country || "—")}</td>
+          <td>${escapeHtml(entry.rir || "—")}</td>
+          <td>${cidrsHtml}</td>
+          <td><div style="display:flex;flex-wrap:wrap;gap:4px">${ipsHtml}</div></td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      ${statsHtml}
+      <p class="hint" style="margin-bottom:8px">Обновлено: ${escapeHtml(lookedUpAt)}</p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>ASN</th>
+              <th>Организация</th>
+              <th>Страна</th>
+              <th>RIR</th>
+              <th>CIDR</th>
+              <th>IP-адреса</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function formatDorkCount(value) {
     if (value === null || value === undefined || value === "") {
       return "-";
@@ -1629,6 +1743,10 @@
     const statCards = [
       { label: "Запросы", value: Number(summary.totalQueries) || rows.length },
       { label: "OK", value: Number(summary.ok) || 0 },
+      { label: "High risk", value: Number(summary.highRiskHits) || 0 },
+      { label: "Medium risk", value: Number(summary.mediumRiskHits) || 0 },
+      { label: "429", value: Number(summary.rateLimited) || 0 },
+      { label: "Skipped", value: Number(summary.skipped) || 0 },
       { label: "Blocked", value: Number(summary.blocked) || 0 },
       { label: "Ошибки", value: Number(summary.errors) || 0 },
     ]
@@ -1648,6 +1766,8 @@
             (item) => `
               <tr>
                 <td>${escapeHtml(item.label || item.engine || "-")}</td>
+                <td>${escapeHtml(item.category || "-")}</td>
+                <td><span class="pill tiny">${escapeHtml(item.risk || "-")}</span></td>
                 <td class="mono">${escapeHtml(item.query || "-")}</td>
                 <td class="mono">${escapeHtml(formatDorkCount(item.totalResults))}</td>
                 <td class="mono">${escapeHtml(formatDorkCount(item.visibleResults))}</td>
@@ -1660,7 +1780,7 @@
           .join("")
       : `
         <tr>
-          <td colspan="7">Статистика дорков пока пустая.</td>
+          <td colspan="9">Статистика дорков пока пустая.</td>
         </tr>
       `;
 
@@ -1679,6 +1799,8 @@
             <thead>
               <tr>
                 <th>Поисковик</th>
+                <th>Категория</th>
+                <th>Риск</th>
                 <th>Запрос</th>
                 <th>Найдено</th>
                 <th>На странице</th>
@@ -1950,6 +2072,7 @@
     let dorkStatsData = project.dorkStats || null;
     let intelxData = null;
     let emailData = project.emails || null;
+    let asnData = project.asn || null;
     let activeDataTab = "subdomains";
     const selectedSubdomainIds = new Set();
     const selectedEmailSourceKeys = new Set();
@@ -1988,8 +2111,8 @@
         ? String(project.intelx.customQuery)
         : "";
     const projectStatCards = [
-      { label: "Поддомены", value: Number(project.counts && project.counts.subdomains) || 0 },
-      { label: "DNS-записи", value: Number(project.counts && project.counts.dnsRecords) || 0 },
+      { label: "Хосты", value: Number(project.counts && project.counts.subdomains) || 0 },
+      { label: "DNS", value: Number(project.counts && project.counts.dnsRecords) || 0 },
       { label: "Запуски", value: Number(project.counts && project.counts.runs) || 0 },
     ]
       .map(
@@ -2000,6 +2123,9 @@
           </div>
         `,
       )
+      .join("");
+    const selectedScanProviderOptions = SELECTED_SCAN_PROVIDERS
+      .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
       .join("");
 
     appEl.innerHTML = `
@@ -2042,6 +2168,7 @@
               <button class="btn btn-ghost" id="tab-emails-btn" type="button">УЗ</button>
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
+              <button class="btn btn-ghost" id="tab-asn-btn" type="button">ASN</button>
             </div>
             <div id="subdomains-panel" class="project-data-panel">
             <div class="stack-md project-data-toolbar-stack">
@@ -2061,6 +2188,11 @@
                 <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
                 <button class="btn btn-primary" id="subdomain-create-btn" type="submit">Добавить поддомен</button>
                 <button class="btn btn-secondary" id="resolve-selected-btn" type="button">Резолв выбранных (быстрый)</button>
+                <select id="selected-scan-provider" class="text-input mono" aria-label="Провайдер для скана выбранных">
+                  ${selectedScanProviderOptions}
+                </select>
+                <button class="btn btn-secondary" id="scan-selected-provider-btn" type="button">Скан выбранных</button>
+                <button class="btn btn-secondary" id="scan-root-hosts-provider-btn" type="button">Скан root-хостов</button>
                 <button class="btn btn-danger" id="delete-selected-btn" type="button">Удалить выбранные</button>
                 <button class="btn btn-secondary" id="export-selected-csv-btn" type="button">Экспорт выбранных</button>
                 <button class="btn btn-danger" id="subdomain-delete-all-btn" type="button">Удалить все</button>
@@ -2118,9 +2250,24 @@
                   <button class="btn btn-ghost" id="open-yandex-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Yandex: site</button>
                   <button class="btn btn-ghost" id="open-yandex-subdomain-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Yandex: *.site</button>
                   <button class="btn btn-secondary" id="dork-stats-load-btn" type="button">Обновить статистику дорков</button>
+                  <div class="row row-no-margin" style="align-items: center; gap: 8px; margin: 0 8px;">
+                    <label class="toggle" style="margin: 0; font-size: 14px;">
+                      <input type="checkbox" id="dork-stats-use-google" checked />
+                      Google
+                    </label>
+                    <label class="toggle" style="margin: 0; font-size: 14px;">
+                      <input type="checkbox" id="dork-stats-use-yandex" checked />
+                      Yandex
+                    </label>
+                    <label class="toggle" style="margin: 0; font-size: 14px;">
+                      <input type="checkbox" id="dork-stats-use-duckduckgo" checked />
+                      DuckDuckGo
+                    </label>
+                  </div>
                   <button class="btn btn-ghost" id="dork-stats-export-csv-btn" type="button">Экспорт CSV</button>
+                  <button class="btn btn-danger" id="dork-stats-clear-btn" type="button">Очистить статистику</button>
                 </div>
-                <div class="hint">Сохраняет примерное количество результатов Google и Yandex по site-доркам проекта.</div>
+                <div class="hint">Сохраняет примерное количество результатов Google, Yandex и DuckDuckGo по site-доркам проекта.</div>
               </div>
               <div id="dork-stats-action-message"></div>
               <div id="dork-stats-table-root"></div>
@@ -2150,6 +2297,17 @@
               </div>
               <div id="intelx-action-message"></div>
               <div id="intelx-table-root"></div>
+            </div>
+            <div id="asn-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-primary" id="run-asn-btn" type="button">Запустить ASN-лукап</button>
+                  <button class="btn btn-ghost" id="asn-export-csv-btn" type="button">Экспорт CSV</button>
+                </div>
+                <div class="hint">Определяет ASN-зоны для всех зарезолвленных IP через DNS-запросы к Team Cymru (без внешних API).</div>
+              </div>
+              <div id="asn-action-message"></div>
+              <div id="asn-table-root"></div>
             </div>
             <div class="project-data-panel">
               <div class="row wrap project-panel-toolbar">
@@ -2203,6 +2361,7 @@
     const tabEmailsBtn = document.getElementById("tab-emails-btn");
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
+    const tabAsnBtn = document.getElementById("tab-asn-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
     const webarchivePanel = document.getElementById("webarchive-panel");
@@ -2210,10 +2369,18 @@
     const emailsPanel = document.getElementById("emails-panel");
     const vtDeepPanel = document.getElementById("vtdeep-panel");
     const intelxPanel = document.getElementById("intelx-panel");
+    const asnPanel = document.getElementById("asn-panel");
+    const asnActionMessageEl = document.getElementById("asn-action-message");
+    const asnTableRoot = document.getElementById("asn-table-root");
+    const runAsnBtn = document.getElementById("run-asn-btn");
+    const asnExportCsvBtn = document.getElementById("asn-export-csv-btn");
     const subdomainCreateForm = document.getElementById("subdomain-create-form");
     const subdomainCreateHostInput = document.getElementById("subdomain-create-host");
     const subdomainCreateBtn = document.getElementById("subdomain-create-btn");
     const resolveSelectedBtn = document.getElementById("resolve-selected-btn");
+    const selectedScanProviderSelect = document.getElementById("selected-scan-provider");
+    const scanSelectedProviderBtn = document.getElementById("scan-selected-provider-btn");
+    const scanRootHostsProviderBtn = document.getElementById("scan-root-hosts-provider-btn");
     const deleteSelectedBtn = document.getElementById("delete-selected-btn");
     const exportSelectedCsvBtn = document.getElementById("export-selected-csv-btn");
     const subdomainDeleteAllBtn = document.getElementById("subdomain-delete-all-btn");
@@ -2230,6 +2397,7 @@
     const webarchiveTableRoot = document.getElementById("webarchive-table-root");
     const dorkStatsLoadBtn = document.getElementById("dork-stats-load-btn");
     const dorkStatsExportCsvBtn = document.getElementById("dork-stats-export-csv-btn");
+    const dorkStatsClearBtn = document.getElementById("dork-stats-clear-btn");
     const dorkStatsActionMessageEl = document.getElementById("dork-stats-action-message");
     const dorkStatsTableRoot = document.getElementById("dork-stats-table-root");
     const emailsRefreshBtn = document.getElementById("emails-refresh-btn");
@@ -2348,6 +2516,7 @@
       const showEmails = activeDataTab === "emails";
       const showVtDeep = activeDataTab === "vtdeep";
       const showIntelx = activeDataTab === "intelx";
+      const showAsn = activeDataTab === "asn";
       subdomainsPanel.hidden = !showSubdomains;
       whoisPanel.hidden = !showWhois;
       webarchivePanel.hidden = !showWebarchive;
@@ -2355,6 +2524,7 @@
       emailsPanel.hidden = !showEmails;
       vtDeepPanel.hidden = !showVtDeep;
       intelxPanel.hidden = !showIntelx;
+      asnPanel.hidden = !showAsn;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
       tabWebarchiveBtn.className = showWebarchive ? "btn btn-primary" : "btn btn-ghost";
@@ -2362,6 +2532,7 @@
       tabEmailsBtn.className = showEmails ? "btn btn-primary" : "btn btn-ghost";
       tabVtDeepBtn.className = showVtDeep ? "btn btn-primary" : "btn btn-ghost";
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
+      tabAsnBtn.className = showAsn ? "btn btn-primary" : "btn btn-ghost";
     }
 
     function createRunsSignature(list) {
@@ -2631,6 +2802,7 @@
 
     function renderDorkStats() {
       dorkStatsExportCsvBtn.disabled = !dorkStatsData;
+      dorkStatsClearBtn.disabled = !dorkStatsData;
       dorkStatsTableRoot.innerHTML = buildDorkStatsTable(dorkStatsData);
       setDorkStatsMessage("", "");
     }
@@ -2651,6 +2823,11 @@
       setEmailsMessage("", "");
     }
 
+    function renderAsn() {
+      asnExportCsvBtn.disabled = !asnData;
+      asnTableRoot.innerHTML = buildAsnTable(asnData);
+    }
+
     function renderActiveDataTabContent() {
       if (activeDataTab === "subdomains") {
         renderSubdomains();
@@ -2666,6 +2843,8 @@
         renderVtDeep();
       } else if (activeDataTab === "intelx") {
         renderIntelx();
+      } else if (activeDataTab === "asn") {
+        renderAsn();
       }
     }
 
@@ -2810,6 +2989,19 @@
       }
     }
 
+    async function refreshAsnInfo() {
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/asn`);
+        if (disposed) return;
+        asnData = payload && payload.result ? payload.result : null;
+        if (activeDataTab === "asn") renderAsn();
+      } catch (error) {
+        if (asnActionMessageEl) {
+          asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось загрузить ASN-данные"));
+        }
+      }
+    }
+
     async function refreshRuns() {
       if (disposed) {
         return;
@@ -2886,6 +3078,9 @@
           await refreshIntelxInfo();
           await refreshEmailsInfo();
         }
+        if (hasNewSuccessfulRun("ASN")) {
+          await refreshAsnInfo();
+        }
         const hasActiveRuns = runs.some((run) => ACTIVE_STATUSES.has(run.status));
         const shouldRefreshSubdomains = hasActiveRuns || hadActiveRuns;
         hadActiveRuns = hasActiveRuns;
@@ -2929,9 +3124,13 @@
       intelxDeleteSelectedBtn.disabled = disabled || selectedIntelxHitKeys.size === 0;
       intelxExportCsvBtn.disabled = disabled || !intelxData;
       dorkStatsExportCsvBtn.disabled = disabled || !dorkStatsData;
+      dorkStatsClearBtn.disabled = disabled || !dorkStatsData;
       whoisExportCsvBtn.disabled = disabled || !String(whoisInfoField.value || "").trim();
       runsExportCsvBtn.disabled = disabled || runs.length === 0;
       resolveSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
+      scanSelectedProviderBtn.disabled = disabled || selectedSubdomainIds.size === 0;
+      scanRootHostsProviderBtn.disabled = disabled || !subdomainsLoaded || Number(subdomainsPagination.total) === 0;
+      selectedScanProviderSelect.disabled = disabled;
       deleteSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       exportSelectedCsvBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       if (subdomainsSearchInput) {
@@ -3041,10 +3240,12 @@
     }
 
     function exportDorkStatsCsv() {
-      const headers = ["label", "engine", "query", "totalResults", "visibleResults", "status", "url", "error"];
+      const headers = ["label", "engine", "category", "risk", "query", "totalResults", "visibleResults", "status", "url", "error"];
       const rows = (Array.isArray(dorkStatsData?.rows) ? dorkStatsData.rows : []).map((item) => ({
         label: item.label || "",
         engine: item.engine || "",
+        category: item.category || "",
+        risk: item.risk || "",
         query: item.query || "",
         totalResults: item.totalResults ?? "",
         visibleResults: item.visibleResults ?? "",
@@ -3550,6 +3751,52 @@
       }
     });
 
+    tabAsnBtn.addEventListener("click", () => {
+      activeDataTab = "asn";
+      renderDataTab();
+      renderAsn();
+      if (!asnData) {
+        void refreshAsnInfo();
+      }
+    });
+
+    runAsnBtn.addEventListener("click", async () => {
+      asnActionMessageEl.innerHTML = "";
+      runAsnBtn.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/asn-task`, { method: "POST", body: {} });
+        showPopup("ASN-лукап поставлен в очередь", "success");
+        await refreshRuns();
+      } catch (error) {
+        asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось запустить ASN-лукап"));
+      } finally {
+        runAsnBtn.disabled = false;
+      }
+    });
+
+    asnExportCsvBtn.addEventListener("click", () => {
+      if (!asnData || !Array.isArray(asnData.asns)) return;
+      const rows = [["ASN", "Организация", "Страна", "RIR", "CIDR", "IP-адреса"]];
+      for (const entry of asnData.asns) {
+        rows.push([
+          entry.asn || "",
+          entry.org || "",
+          entry.country || "",
+          entry.rir || "",
+          (entry.cidrs || []).join("; "),
+          (entry.ips || []).join("; "),
+        ]);
+      }
+      const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "asn.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
     vtDeepLoadBtn.addEventListener("click", () => {
       void queueAction(
         `/api/projects/${encodeURIComponent(projectId)}/vt-deep-task`,
@@ -3575,11 +3822,43 @@
     });
 
     dorkStatsLoadBtn.addEventListener("click", () => {
+      const useGoogle = document.getElementById("dork-stats-use-google")?.checked ?? true;
+      const useYandex = document.getElementById("dork-stats-use-yandex")?.checked ?? true;
+      const useDdg = document.getElementById("dork-stats-use-duckduckgo")?.checked ?? true;
+      const engines = [];
+      if (useGoogle) engines.push("google");
+      if (useYandex) engines.push("yandex");
+      if (useDdg) engines.push("duckduckgo");
+
+      if (engines.length === 0) {
+        window.alert("Выберите хотя бы одного провайдера для дорков");
+        return;
+      }
+
       void queueAction(
         `/api/projects/${encodeURIComponent(projectId)}/dork-stats-task`,
         "Сбор статистики дорков поставлен в очередь",
-        {},
+        { engines },
       );
+    });
+
+    dorkStatsClearBtn.addEventListener("click", async () => {
+      if (!window.confirm("Вы уверены, что хотите очистить статистику дорков?")) {
+        return;
+      }
+      dorkStatsClearBtn.disabled = true;
+      setDorkStatsMessage("", "");
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/dork-stats`, {
+          method: "DELETE",
+        });
+        setDorkStatsMessage("Статистика дорков очищена", "success");
+        void refreshDorkStatsInfo();
+      } catch (error) {
+        setDorkStatsMessage(friendlyError(error, "Не удалось очистить статистику дорков"), "error");
+      } finally {
+        dorkStatsClearBtn.disabled = false;
+      }
     });
 
     emailsRefreshBtn.addEventListener("click", () => {
@@ -3898,6 +4177,59 @@
       }
     });
 
+    scanSelectedProviderBtn.addEventListener("click", async () => {
+      const selectedIds = Array.from(selectedSubdomainIds);
+      const provider = selectedScanProviderSelect ? String(selectedScanProviderSelect.value || "").trim() : "";
+      if (!selectedIds.length) {
+        setSubdomainMessage("Выберите хотя бы один хост", "error");
+        return;
+      }
+      if (!provider) {
+        setSubdomainMessage("Выберите провайдера для скана", "error");
+        return;
+      }
+
+      scanSelectedProviderBtn.disabled = true;
+      setSubdomainMessage("", "");
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/scan-selected`, {
+          method: "POST",
+          body: { scope: `provider:${provider}`, subdomainIds: selectedIds },
+        });
+        setSubdomainMessage(`Скан выбранных через ${provider} поставлен в очередь: ${selectedIds.length}`, "success");
+        selectedSubdomainIds.clear();
+        renderSubdomains();
+        await refreshRuns();
+      } catch (error) {
+        setSubdomainMessage(friendlyError(error, "Не удалось поставить скан выбранных в очередь"), "error");
+      } finally {
+        scanSelectedProviderBtn.disabled = selectedSubdomainIds.size === 0;
+      }
+    });
+
+    scanRootHostsProviderBtn.addEventListener("click", async () => {
+      const provider = selectedScanProviderSelect ? String(selectedScanProviderSelect.value || "").trim() : "";
+      if (!provider) {
+        setSubdomainMessage("Выберите провайдера для скана", "error");
+        return;
+      }
+
+      scanRootHostsProviderBtn.disabled = true;
+      setSubdomainMessage("", "");
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/scan`, {
+          method: "POST",
+          body: { scope: `provider:${provider}` },
+        });
+        setSubdomainMessage(`Скан root-хостов через ${provider} поставлен в очередь`, "success");
+        await refreshRuns();
+      } catch (error) {
+        setSubdomainMessage(friendlyError(error, "Не удалось поставить скан root-хостов в очередь"), "error");
+      } finally {
+        scanRootHostsProviderBtn.disabled = !subdomainsLoaded || Number(subdomainsPagination.total) === 0;
+      }
+    });
+
     deleteSelectedBtn.addEventListener("click", async () => {
       const selectedIds = Array.from(selectedSubdomainIds);
       if (!selectedIds.length) {
@@ -4075,7 +4407,19 @@
               <div><strong>${escapeHtml(provider.title || provider.provider)}</strong></div>
               <div class="hint mono">${escapeHtml(provider.provider)}</div>
             </td>
-            <td>${escapeHtml(provider.description || "-")}</td>
+            <td>
+              <div>${escapeHtml(provider.description || "-")}</div>
+              ${Array.isArray(provider.helpLinks) && provider.helpLinks.length > 0
+                ? `<div class="row row-no-margin wrap" style="gap: 8px; margin-top: 6px;">
+                    ${provider.helpLinks.map(link => `
+                      <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost" style="font-size: 11px; padding: 2px 8px; border: 1px solid var(--accent); color: var(--accent); border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+                        ${escapeHtml(link.text)} ↗
+                      </a>
+                    `).join("")}
+                   </div>`
+                : ""
+              }
+            </td>
             <td>
               <label class="toggle">
                 <input type="checkbox" class="provider-enabled" ${provider.enabled ? "checked" : ""} />

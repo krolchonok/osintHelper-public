@@ -12,6 +12,8 @@ const URLSCAN_MAX_PAGES = 5;
 const URLSCAN_PAGE_SIZE = 100;
 const VIRUSTOTAL_MAX_PAGES = 8;
 const SHODAN_MAX_PAGES = 5;
+const NETLAS_MAX_PAGES = 5;
+const NETLAS_PAGE_SIZE = 20;
 const DORK_MAX_PAGES = 2;
 const DORK_HEADERS = {
   "User-Agent":
@@ -32,6 +34,7 @@ const SUPPORTED_PASSIVE_SOURCE_IDS = [
   "bevigil",
   "bufferover",
   "fullhunt",
+  "netlas",
   "reconeer",
   "securitytrails",
   "shodan",
@@ -738,6 +741,57 @@ async function fetchShodan(domain, token) {
   return Array.from(found).map((host) => ({ host, sources: ["shodan"] }));
 }
 
+async function fetchNetlas(domain, token) {
+  const found = new Set();
+  const query = `domain:*.${domain} a:*`;
+
+  for (let page = 0; page < NETLAS_MAX_PAGES; page += 1) {
+    const start = page * NETLAS_PAGE_SIZE;
+    const endpoint =
+      `https://app.netlas.io/api/domains/?q=${encodeURIComponent(query)}` +
+      `&start=${start}&fields=domain&source_type=include`;
+
+    const data = await requestJson(endpoint, {
+      source: "netlas",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (items.length === 0) {
+      break;
+    }
+
+    for (const item of items) {
+      const candidates = [
+        item?.data?.domain,
+        item?.domain,
+      ];
+
+      for (const value of candidates) {
+        const host = normalizeHost(value);
+        if (host && inScope(host, domain)) {
+          found.add(host);
+        }
+      }
+
+      if (!candidates.some(Boolean)) {
+        for (const host of extractHostsFromText(JSON.stringify(item || {}), domain)) {
+          found.add(host);
+        }
+      }
+    }
+
+    if (items.length < NETLAS_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return Array.from(found).map((host) => ({ host, sources: ["netlas"] }));
+}
+
 async function fetchWhoisXmlApi(domain, token) {
   const endpoint =
     `https://subdomains.whoisxmlapi.com/api/v1?apiKey=${encodeURIComponent(token)}` +
@@ -1034,33 +1088,7 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
     getProviderRuntimeSettings().map((item) => [item.provider, item]),
   );
 
-  const googleCseToken = getProviderToken(providerSettings, "googlecse");
-  const googleCseParts = parseTwoPartToken(googleCseToken);
-  if (googleCseParts) {
-    sources.push({
-      name: "dork-google-api",
-      category: "dorks",
-      fetcher: (targetDomain) => fetchGoogleDorksApi(targetDomain, googleCseParts.first, googleCseParts.second),
-    });
-  } else {
-    sources.push({ name: "dork-google", category: "dorks", fetcher: fetchGoogleDorks });
-    console.log("[passive][dork] google api token not set; fallback=html");
-  }
-
   sources.push({ name: "dork-bing", category: "dorks", fetcher: fetchBingDorks });
-
-  const yandexApiToken = getProviderToken(providerSettings, "yandexsearchapi");
-  const yandexApiParts = parseTwoPartToken(yandexApiToken);
-  if (yandexApiParts) {
-    sources.push({
-      name: "dork-yandex-api",
-      category: "dorks",
-      fetcher: (targetDomain) => fetchYandexDorksApi(targetDomain, yandexApiParts.first, yandexApiParts.second),
-    });
-  } else {
-    sources.push({ name: "dork-yandex", category: "dorks", fetcher: fetchYandexDorks });
-    console.log("[passive][dork] yandex api token not set; fallback=html");
-  }
 
   const urlscanToken = getProviderToken(providerSettings, "urlscan");
   if (urlscanToken) {
@@ -1126,6 +1154,17 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
     });
   } else {
     console.log("[passive][skip] source=shodan reason=missing_or_disabled_token");
+  }
+
+  const netlasToken = getProviderToken(providerSettings, "netlas");
+  if (netlasToken) {
+    sources.push({
+      name: "netlas",
+      category: "extended",
+      fetcher: (targetDomain) => fetchNetlas(targetDomain, netlasToken),
+    });
+  } else {
+    console.log("[passive][skip] source=netlas reason=missing_or_disabled_token");
   }
 
   const whoisXmlApiToken = getProviderToken(providerSettings, "whoisxmlapi");
@@ -1222,7 +1261,7 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
   return mergeResults(sourceResults);
 }
 
-async function executePassiveScan(projectId, onProgress, scanScope = "core") {
+async function executePassiveScan(projectId, onProgress, scanScope = "core", options = null) {
   const { db } = getDbState();
 
   await emit(onProgress, 5, "Loading project");
@@ -1234,9 +1273,36 @@ async function executePassiveScan(projectId, onProgress, scanScope = "core") {
     throw new Error("Project not found");
   }
 
-  const domains = getProjectScopeDomains(project.id, project.domain);
-  if (!domains.length) {
+  const projectDomains = getProjectScopeDomains(project.id, project.domain);
+  if (!projectDomains.length) {
     throw new Error("Add at least one domain to the project before running passive scan");
+  }
+
+  const requestedTargets = Array.isArray(options?.targetDomains)
+    ? options.targetDomains.map((item) => normalizeHost(item)).filter(Boolean)
+    : [];
+  const isProviderScope = String(scanScope || "").startsWith("provider:");
+  const rootHostTargets = isProviderScope && requestedTargets.length === 0
+    ? db
+      .prepare("SELECT host FROM subdomains WHERE project_id = ? AND is_root = 1 ORDER BY host ASC")
+      .all(project.id)
+      .map((row) => normalizeHost(row.host))
+      .filter(Boolean)
+    : [];
+  const targetCandidates = requestedTargets.length
+    ? requestedTargets
+    : isProviderScope
+      ? rootHostTargets
+      : projectDomains;
+  const domains = Array.from(
+    new Set(targetCandidates.filter((item) => isHostInProjectScope(item, projectDomains))),
+  );
+  if (!domains.length) {
+    throw new Error(
+      isProviderScope
+        ? "Add root hosts to the project before running provider scan"
+        : "Selected subdomains are outside project scope",
+    );
   }
 
   const isFullyPassive = scanScope === "fullypassive";
@@ -1249,14 +1315,14 @@ async function executePassiveScan(projectId, onProgress, scanScope = "core") {
   }
   const mergedResults = mergeResults(results);
 
-  const filtered = mergedResults.filter((item) => isHostInProjectScope(item.host, domains));
+  const filtered = mergedResults.filter((item) => isHostInProjectScope(item.host, projectDomains));
 
   const saveRootProgress = 78;
   const persistStartProgress = 82;
   const persistEndProgress = 98;
 
   await emit(onProgress, saveRootProgress, "Saving root domains");
-  for (const domain of domains) {
+  for (const domain of projectDomains) {
     upsertSubdomain(project.id, domain, true);
   }
 
@@ -1271,7 +1337,7 @@ async function executePassiveScan(projectId, onProgress, scanScope = "core") {
 
   for (let index = 0; index < filtered.length; index += 1) {
     const result = filtered[index];
-    const subdomain = upsertSubdomain(project.id, result.host, domains.includes(result.host));
+    const subdomain = upsertSubdomain(project.id, result.host, projectDomains.includes(result.host));
 
     const sourceList = result.sources.length ? result.sources : ["unknown"];
     saveSources(subdomain.id, sourceList);

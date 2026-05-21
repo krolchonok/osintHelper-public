@@ -11,7 +11,10 @@ services:
     ports:
       - "3001:3001"
     volumes:
+      - .:/app
+      - /app/node_modules
       - sqlite_data:/data
+    command: npm run dev
 
 volumes:
   sqlite_data:

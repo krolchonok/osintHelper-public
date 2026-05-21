@@ -18,7 +18,77 @@ const publicDir = path.resolve(process.cwd(), "public");
 const spaIndexPath = path.join(publicDir, "index.html");
 
 app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
+
+// Proxy captcha assets (JS/CSS/images/etc.) to avoid 404s and asset load errors
+app.use(async (req, res, next) => {
+  const p = req.path;
+  let targetUrl = null;
+
+  if (p.includes("captcha_smart") || p.includes("smartcaptcha") || p.startsWith("/checkcaptcha")) {
+    targetUrl = "https://yandex.ru" + req.originalUrl;
+  } else if (p.startsWith("/sorry/") || p.includes("google-captcha")) {
+    targetUrl = "https://www.google.com" + req.originalUrl;
+  } else if (p.includes("/assets/anomaly/")) {
+    targetUrl = "https://duckduckgo.com" + req.originalUrl;
+  }
+
+  if (targetUrl) {
+    try {
+      const clientCookies = req.headers["cookie"] || "";
+      const cleanedCookies = clientCookies
+        .split(";")
+        .map(c => c.trim())
+        .filter(c => c && !c.startsWith("token="))
+        .join("; ");
+
+      const fetchHeaders = {
+        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        Accept: req.headers["accept"] || "*/*",
+        "Accept-Language": req.headers["accept-language"] || "ru,en;q=0.8",
+      };
+      if (cleanedCookies) {
+        fetchHeaders["Cookie"] = cleanedCookies;
+      }
+
+      const response = await fetch(targetUrl, {
+        method: req.method,
+        headers: fetchHeaders,
+      });
+
+      // Proxy cookies from target to client (strip domain and secure attributes)
+      const rawCookies = response.headers.getSetCookie ? response.headers.getSetCookie() : response.headers.get("set-cookie");
+      if (rawCookies) {
+        const cookieHeaders = Array.isArray(rawCookies) ? rawCookies : [rawCookies];
+        for (const cookieHeader of cookieHeaders) {
+          const parts = cookieHeader.split(";").map(part => {
+            const trimmed = part.trim();
+            const lower = trimmed.toLowerCase();
+            if (lower.startsWith("domain=") || lower === "secure") {
+              return null;
+            }
+            return trimmed;
+          }).filter(Boolean);
+          res.append("Set-Cookie", parts.join("; "));
+        }
+      }
+
+      const contentType = response.headers.get("content-type");
+      if (contentType) {
+        res.setHeader("content-type", contentType);
+      }
+      res.status(response.status);
+
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+      return;
+    } catch (err) {
+      console.error("[captcha-proxy] failed to proxy", targetUrl, err);
+    }
+  }
+  next();
+});
 
 app.use(express.static(publicDir));
 
@@ -93,8 +163,8 @@ async function start() {
     );
   }
 
-  server = app.listen(config.port, () => {
-    console.log(`Server listening on http://localhost:${config.port}`);
+  server = app.listen(config.port, "0.0.0.0", () => {
+    console.log(`Server listening on http://0.0.0.0:${config.port}`);
     console.log(`SQLite file: ${dbPath}`);
     if (config.httpErrorLogEnabled) {
       console.log(`[passive] HTTP error logging enabled: ${config.httpErrorLogFile}`);

@@ -52,6 +52,7 @@ SCAN_WORKER_POLL_MS=1000
 PASSIVE_SOURCE_CONCURRENCY=24
 HTTP_ERROR_LOG_ENABLED=false
 HTTP_ERROR_LOG_FILE=./data/http-errors.log
+NETLAS_API_KEY=
 ```
 
 Если `ADMIN_EMAIL`/`ADMIN_PASSWORD` пустые, при старте генерируется one-time setup URL.
@@ -77,6 +78,13 @@ HTTP_ERROR_LOG_FILE=./data/http-errors.log
 - `googlecse` токен в Provider Settings: `API_KEY|CX`
 - `yandexsearchapi` токен в Provider Settings: `API_KEY|FOLDER_ID` (Yandex Search API v2, endpoint `/v2/web/search`)
 - если токен не задан, используется HTML fallback (может блокироваться антиботом)
+
+Задача статистики дорков дополнительно проверяет scoped-запросы по чувствительным
+артефактам: `.env`, конфиги, YAML/JSON secrets, дампы БД, бэкапы, архивы, логи,
+private keys, `.git`/`.svn`, source maps, directory listing, документы, API docs
+и debug endpoints. Все запросы ограничены `site:<domain>` проекта.
+При `HTTP 429` задача помечает движок как `rate_limited`, пропускает оставшиеся
+запросы этого поисковика в текущем запуске и сохраняет частичный результат.
 
 ### Категории DNS resolve
 

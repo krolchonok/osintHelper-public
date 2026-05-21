@@ -33,3 +33,6 @@ Thumbs.db
 
 # Local git backups
 .git.broken-*/
+
+# Custom project files
+WORK_SUMMARY.md

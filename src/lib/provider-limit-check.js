@@ -230,6 +230,25 @@ async function checkProviderLimit(provider, token) {
     };
   }
 
+  if (providerId === "netlas") {
+    const { data, headers } = await requestJson("https://app.netlas.io/api/users/profile_data/", {
+      headers: {
+        Authorization: `Bearer ${rawToken}`,
+        Accept: "application/json",
+      },
+    });
+    const rates = pickRateLimitHeaders(headers);
+    const requestsLeft = data?.requests_left || {};
+    const coins = data?.coins || {};
+    return {
+      provider: providerId,
+      summary: `requests_left=${Number(requestsLeft.remained) || 0}, coins_left=${Number(coins.left) || 0}`,
+      limit: requestsLeft.limit ?? rates.limit,
+      remaining: requestsLeft.remained ?? rates.remaining,
+      details: data || null,
+    };
+  }
+
   if (providerId === "intelx") {
     const accounts = await fetchIntelxAccountInfo(rawToken);
     const totalAvailable = accounts.reduce((sum, item) => sum + Number(item.available || 0), 0);

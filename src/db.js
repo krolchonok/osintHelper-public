@@ -80,7 +80,7 @@ function initSchema(db) {
       type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE')),
       task_kind TEXT,
       task_payload TEXT,
-      scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive')),
+      scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
       cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
       status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED')),
       progress INTEGER NOT NULL DEFAULT 0,
@@ -198,6 +198,14 @@ function initSchema(db) {
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS project_asn (
+      project_id TEXT PRIMARY KEY,
+      data_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS project_email_overrides (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -213,13 +221,27 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_project_email_overrides_project
       ON project_email_overrides(project_id, updated_at DESC);
 
+    CREATE TABLE IF NOT EXISTS dork_captcha_sessions (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      engine TEXT NOT NULL,
+      captcha_html TEXT NOT NULL,
+      original_url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'RESOLVED')),
+      cookies TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT,
+      FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE,
+      UNIQUE(run_id, engine)
+    );
+
     CREATE TABLE IF NOT EXISTS scan_jobs (
       run_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE')),
       task_kind TEXT,
       task_payload TEXT,
-      scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive')),
+      scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
       status TEXT NOT NULL CHECK(status IN ('QUEUED', 'RUNNING')),
       created_at TEXT NOT NULL,
       started_at TEXT,
@@ -326,6 +348,92 @@ function migrateProjectsTable(db) {
   }
 }
 
+function migrateProviderScanScopes(db) {
+  const rows = db
+    .prepare(`
+      SELECT name, sql
+      FROM sqlite_schema
+      WHERE type = 'table'
+        AND name IN ('scan_runs', 'scan_jobs')
+        AND sql IS NOT NULL
+        AND sql LIKE '%scan_scope IN (%'
+        AND sql NOT LIKE '%provider:%'
+    `)
+    .all();
+
+  if (!rows.length) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    if (rows.some((row) => row.name === "scan_runs")) {
+      db.exec(`
+        CREATE TABLE scan_runs__scope_migration (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE')),
+          task_kind TEXT,
+          task_payload TEXT,
+          scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
+          cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+          status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED')),
+          progress INTEGER NOT NULL DEFAULT 0,
+          stage TEXT,
+          processed INTEGER NOT NULL DEFAULT 0,
+          total INTEGER NOT NULL DEFAULT 0,
+          started_at TEXT,
+          finished_at TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO scan_runs__scope_migration (
+          id, project_id, type, task_kind, task_payload, scan_scope, cancel_requested,
+          status, progress, stage, processed, total, started_at, finished_at, error, created_at
+        )
+        SELECT
+          id, project_id, type, task_kind, task_payload, scan_scope, cancel_requested,
+          status, progress, stage, processed, total, started_at, finished_at, error, created_at
+        FROM scan_runs;
+
+        DROP TABLE scan_runs;
+        ALTER TABLE scan_runs__scope_migration RENAME TO scan_runs;
+      `);
+    }
+
+    if (rows.some((row) => row.name === "scan_jobs")) {
+      db.exec(`
+        CREATE TABLE scan_jobs__scope_migration (
+          run_id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE')),
+          task_kind TEXT,
+          task_payload TEXT,
+          scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
+          status TEXT NOT NULL CHECK(status IN ('QUEUED', 'RUNNING')),
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO scan_jobs__scope_migration (
+          run_id, project_id, type, task_kind, task_payload, scan_scope, status, created_at, started_at
+        )
+        SELECT run_id, project_id, type, task_kind, task_payload, scan_scope, status, created_at, started_at
+        FROM scan_jobs;
+
+        DROP TABLE scan_jobs;
+        ALTER TABLE scan_jobs__scope_migration RENAME TO scan_jobs;
+      `);
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 let state = null;
 
 function openDatabase(rawPath = process.env.SQLITE_PATH) {
@@ -341,6 +449,7 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
   initSchema(db);
   migrateProjectsTable(db);
   repairLegacyProjectsForeignKeys(db);
+  migrateProviderScanScopes(db);
   initSchema(db);
   ensureColumnExists(
     db,

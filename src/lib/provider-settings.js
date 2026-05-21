@@ -51,6 +51,14 @@ function readEnvProviderToken(providerId) {
     return typeof raw === "string" ? raw.trim() : "";
   }
 
+  if (providerId === "netlas") {
+    const raw =
+      process.env.NETLAS_API_KEY ||
+      process.env.NETLAS ||
+      process.env.netlas;
+    return typeof raw === "string" ? raw.trim() : "";
+  }
+
   return "";
 }
 
@@ -123,6 +131,7 @@ function listProviderSettings() {
         enabled: Boolean(row.enabled),
         hasToken: Boolean(row.token_encrypted),
         tokenPartsCount: row.provider === "intelx" ? parseIntelxKeys(token).length : (token ? 1 : 0),
+        helpLinks: providerMap.get(row.provider)?.helpLinks || null,
         updatedAt: row.updated_at,
       };
     });
