@@ -1,5 +1,6 @@
 const CHECK_TIMEOUT_MS = 15000;
 const { fetchIntelxAccountInfo } = require("./intelx");
+const { parseNetlasKeys } = require("./provider-settings");
 
 function parseTwoPartToken(rawToken) {
   const raw = String(rawToken || "").trim();
@@ -231,21 +232,34 @@ async function checkProviderLimit(provider, token) {
   }
 
   if (providerId === "netlas") {
-    const { data, headers } = await requestJson("https://app.netlas.io/api/users/profile_data/", {
-      headers: {
-        Authorization: `Bearer ${rawToken}`,
-        Accept: "application/json",
-      },
-    });
-    const rates = pickRateLimitHeaders(headers);
-    const requestsLeft = data?.requests_left || {};
-    const coins = data?.coins || {};
+    const keys = parseNetlasKeys(rawToken);
+    const accounts = await Promise.all(keys.map(async (key) => {
+      const { data, headers } = await requestJson("https://app.netlas.io/api/users/profile_data/", {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          Accept: "application/json",
+        },
+      });
+      const rates = pickRateLimitHeaders(headers);
+      const requestsLeft = data?.requests_left || {};
+      const coins = data?.coins || {};
+      return {
+        key: `${key.slice(0, 6)}...`,
+        requestsLeft: Number(requestsLeft.remained) || 0,
+        requestsLimit: Number(requestsLeft.limit) || 0,
+        coinsLeft: Number(coins.left) || 0,
+        rateLimit: rates.limit,
+        rateRemaining: rates.remaining,
+      };
+    }));
+    const totalLeft = accounts.reduce((s, a) => s + a.requestsLeft, 0);
+    const totalLimit = accounts.reduce((s, a) => s + a.requestsLimit, 0);
     return {
       provider: providerId,
-      summary: `requests_left=${Number(requestsLeft.remained) || 0}, coins_left=${Number(coins.left) || 0}`,
-      limit: requestsLeft.limit ?? rates.limit,
-      remaining: requestsLeft.remained ?? rates.remaining,
-      details: data || null,
+      summary: accounts.map((a) => `${a.key}: requests=${a.requestsLeft}/${a.requestsLimit}, coins=${a.coinsLeft}`).join(" | "),
+      limit: totalLimit || null,
+      remaining: totalLeft,
+      details: accounts,
     };
   }
 

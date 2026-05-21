@@ -5076,7 +5076,7 @@
 
           if (clearToken) {
             body.clearToken = true;
-          } else {
+          } else if (tokenInput) {
             const token = tokenInput.value.trim();
             if (token) {
               body.token = token;
@@ -5089,7 +5089,7 @@
           });
 
           setRowMessage("Сохранено", "success");
-          tokenInput.value = "";
+          if (tokenInput) tokenInput.value = "";
           await renderProvidersPage();
         } catch (error) {
           setRowMessage(friendlyError(error, "Не удалось сохранить"), "error");

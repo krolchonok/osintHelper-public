@@ -1638,6 +1638,7 @@ body.ui-theme-bright .error-cell {
 #vtdeep-panel .text-input,
 #whois-info-field {
   background: rgba(9, 18, 24, 0.86);
+  padding: 12px 14px;
 }
 
 #whois-info-field {
