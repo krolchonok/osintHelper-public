@@ -4820,12 +4820,13 @@
     const rows = providers
       .map(
         (provider) => {
+          const isMultiKey = provider.provider === "intelx" || provider.provider === "netlas";
           const tokenMeta = provider.hasToken
-            ? (provider.provider === "intelx"
+            ? (isMultiKey
               ? `Да${provider.tokenPartsCount > 1 ? ` (${provider.tokenPartsCount} ключей)` : ""}`
               : "Да")
             : "Нет";
-          const intelxKeyItems = provider.provider === "intelx"
+          const multiKeyItems = isMultiKey
             ? Array.from({ length: Number(provider.tokenPartsCount) || 0 }, (_item, index) => `
               <div class="intelx-key-item">
                 <span class="mono">Key ${index + 1}</span>
@@ -4835,7 +4836,7 @@
             : "";
 
           return `
-          <tr class="provider-row ${provider.provider === "intelx" ? "provider-row-intelx" : ""}" data-provider="${escapeHtml(provider.provider)}">
+          <tr class="provider-row ${isMultiKey ? "provider-row-intelx" : ""}" data-provider="${escapeHtml(provider.provider)}">
             <td>
               <div><strong>${escapeHtml(provider.title || provider.provider)}</strong></div>
               <div class="hint mono">${escapeHtml(provider.provider)}</div>
@@ -4863,7 +4864,7 @@
               <div>${escapeHtml(tokenMeta)}</div>
             </td>
             <td>
-              ${provider.provider === "intelx"
+              ${isMultiKey
                 ? `
                   <div class="intelx-stack">
                     <section class="intelx-block">
@@ -4872,7 +4873,7 @@
                         <span class="hint">${Number(provider.tokenPartsCount) || 0}</span>
                       </div>
                       <div class="intelx-key-list">
-                        ${intelxKeyItems || '<div class="hint">Ключи пока не добавлены.</div>'}
+                        ${multiKeyItems || '<div class="hint">Ключи пока не добавлены.</div>'}
                       </div>
                     </section>
                     <section class="intelx-block intelx-block-add">
@@ -4880,7 +4881,7 @@
                         <strong>Добавить ключ</strong>
                       </div>
                       <div class="row wrap intelx-key-input-row">
-                        <input class="text-input intelx-key-input" type="password" placeholder="Новый IntelX key" />
+                        <input class="text-input intelx-key-input" type="password" placeholder="Новый ключ" />
                         <button class="btn btn-secondary intelx-key-add" type="button">Добавить</button>
                       </div>
                     </section>
@@ -4889,7 +4890,7 @@
                 : `<input class="text-input provider-token" type="text" placeholder="Новый токен (необязательно)" />`}
             </td>
             <td>
-              ${provider.provider === "intelx"
+              ${isMultiKey
                 ? `
                   <div class="intelx-stack">
                     <section class="intelx-block intelx-block-actions">
@@ -5109,21 +5110,21 @@
         intelxKeyAddButton.addEventListener("click", async () => {
           const key = intelxKeyInput.value.trim();
           if (!key) {
-            setRowMessage("Введите IntelX key", "error");
+            setRowMessage("Введите ключ", "error");
             return;
           }
 
           setRowBusy(true);
           setRowMessage("", "");
           try {
-            await api("/api/settings/providers/intelx/keys", {
+            await api(`/api/settings/providers/${encodeURIComponent(provider)}/keys`, {
               method: "POST",
               body: { key },
             });
-            setRowMessage("IntelX key добавлен", "success");
+            setRowMessage("Ключ добавлен", "success");
             await renderProvidersPage();
           } catch (error) {
-            setRowMessage(friendlyError(error, "Не удалось добавить IntelX key"), "error");
+            setRowMessage(friendlyError(error, "Не удалось добавить ключ"), "error");
           } finally {
             setRowBusy(false);
           }
@@ -5140,13 +5141,13 @@
           setRowBusy(true);
           setRowMessage("", "");
           try {
-            await api(`/api/settings/providers/intelx/keys/${encodeURIComponent(keyIndex)}`, {
+            await api(`/api/settings/providers/${encodeURIComponent(provider)}/keys/${encodeURIComponent(keyIndex)}`, {
               method: "DELETE",
             });
-            setRowMessage("IntelX key удален", "success");
+            setRowMessage("Ключ удален", "success");
             await renderProvidersPage();
           } catch (error) {
-            setRowMessage(friendlyError(error, "Не удалось удалить IntelX key"), "error");
+            setRowMessage(friendlyError(error, "Не удалось удалить ключ"), "error");
           } finally {
             setRowBusy(false);
           }

@@ -3,7 +3,7 @@ const path = require("node:path");
 const { getDbState } = require("../db");
 const { config } = require("./config");
 const { getProjectScopeDomains, isHostInProjectScope } = require("./project-domains");
-const { getProviderRuntimeSettings } = require("./provider-settings");
+const { getProviderRuntimeSettings, parseNetlasKeys } = require("./provider-settings");
 const { clampProgress, createId, nowIso } = require("./utils");
 
 const WEB_SOURCE_TIMEOUT_MS = 15000;
@@ -12,8 +12,9 @@ const URLSCAN_MAX_PAGES = 5;
 const URLSCAN_PAGE_SIZE = 100;
 const VIRUSTOTAL_MAX_PAGES = 8;
 const SHODAN_MAX_PAGES = 5;
-const NETLAS_MAX_PAGES = 5;
+const NETLAS_MAX_PAGES = 50;
 const NETLAS_PAGE_SIZE = 20;
+const NETLAS_ALPHA_PREFIXES = "abcdefghijklmnopqrstuvwxyz0123456789".split("");
 const DORK_MAX_PAGES = 2;
 const DORK_HEADERS = {
   "User-Agent":
@@ -687,9 +688,21 @@ async function fetchShodan(domain, token) {
   return Array.from(found).map((host) => ({ host, sources: ["shodan"] }));
 }
 
-async function fetchNetlas(domain, token) {
-  const found = new Set();
-  const query = `domain:*.${domain} a:*`;
+function createNetlasKeyRotator(keys) {
+  let index = 0;
+  return {
+    current: () => keys[index],
+    rotate: () => {
+      index = (index + 1) % keys.length;
+      return keys[index];
+    },
+    count: keys.length,
+  };
+}
+
+async function fetchNetlasQuery(domain, rotator, query, found) {
+  let totalCount = null;
+  let attemptsLeft = rotator.count;
 
   for (let page = 0; page < NETLAS_MAX_PAGES; page += 1) {
     const start = page * NETLAS_PAGE_SIZE;
@@ -697,32 +710,49 @@ async function fetchNetlas(domain, token) {
       `https://app.netlas.io/api/domains/?q=${encodeURIComponent(query)}` +
       `&start=${start}&fields=domain&source_type=include`;
 
-    const data = await requestJson(endpoint, {
-      source: "netlas",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-
-    const items = Array.isArray(data?.items) ? data.items : [];
-    if (items.length === 0) {
-      break;
+    let data;
+    let rateLimited = false;
+    try {
+      const raw = await requestText(endpoint, {
+        source: "netlas",
+        headers: {
+          Authorization: `Bearer ${rotator.current()}`,
+          Accept: "application/json",
+        },
+      });
+      data = JSON.parse(raw);
+    } catch {
+      rateLimited = true;
     }
 
-    for (const item of items) {
-      const candidates = [
-        item?.data?.domain,
-        item?.domain,
-      ];
+    if (rateLimited) {
+      if (attemptsLeft > 1) {
+        // Есть ещё ключи — ротируем и повторяем эту же страницу
+        rotator.rotate();
+        attemptsLeft -= 1;
+        page -= 1;
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
+      // Ключи кончились — если уже что-то собрали, сигнализируем о cap
+      return page > 0 && found.size > 0;
+    }
 
+    attemptsLeft = rotator.count;
+
+    if (page === 0 && typeof data?.count === "number") {
+      totalCount = data.count;
+    }
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (items.length === 0) break;
+
+    for (const item of items) {
+      const candidates = [item?.data?.domain, item?.domain];
       for (const value of candidates) {
         const host = normalizeHost(value);
-        if (host && inScope(host, domain)) {
-          found.add(host);
-        }
+        if (host && inScope(host, domain)) found.add(host);
       }
-
       if (!candidates.some(Boolean)) {
         for (const host of extractHostsFromText(JSON.stringify(item || {}), domain)) {
           found.add(host);
@@ -730,8 +760,25 @@ async function fetchNetlas(domain, token) {
       }
     }
 
-    if (items.length < NETLAS_PAGE_SIZE) {
-      break;
+    if (items.length < NETLAS_PAGE_SIZE) break;
+    if (page === NETLAS_MAX_PAGES - 1) return true;
+  }
+  return totalCount !== null && totalCount > found.size;
+}
+
+async function fetchNetlas(domain, token) {
+  const keys = parseNetlasKeys(token);
+  if (!keys.length) return [];
+
+  const rotator = createNetlasKeyRotator(keys);
+  const found = new Set();
+
+  const hitLimit = await fetchNetlasQuery(domain, rotator, `domain:*.${domain}`, found);
+
+  if (hitLimit) {
+    for (const prefix of NETLAS_ALPHA_PREFIXES) {
+      await fetchNetlasQuery(domain, rotator, `domain:${prefix}*.${domain}`, found);
+      await new Promise((r) => setTimeout(r, 1000));
     }
   }
 

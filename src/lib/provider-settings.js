@@ -4,6 +4,13 @@ const YAML = require("yaml");
 const { getDbState } = require("../db");
 const { encryptToken, decryptToken } = require("./crypto");
 const { parseIntelxKeys } = require("./intelx");
+
+function parseNetlasKeys(rawToken) {
+  return String(rawToken || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 const { providerCatalog, providerMap } = require("./providers");
 const { createId, nowIso } = require("./utils");
 
@@ -130,7 +137,11 @@ function listProviderSettings() {
         description: row.description,
         enabled: Boolean(row.enabled),
         hasToken: Boolean(row.token_encrypted),
-        tokenPartsCount: row.provider === "intelx" ? parseIntelxKeys(token).length : (token ? 1 : 0),
+        tokenPartsCount: row.provider === "intelx"
+        ? parseIntelxKeys(token).length
+        : row.provider === "netlas"
+          ? parseNetlasKeys(token).length
+          : (token ? 1 : 0),
         helpLinks: providerMap.get(row.provider)?.helpLinks || null,
         updatedAt: row.updated_at,
       };
@@ -188,6 +199,60 @@ function removeIntelxKey(index) {
     UPDATE provider_settings
     SET token_encrypted = ?, updated_at = ?
     WHERE provider = 'intelx'
+  `).run(keys.length ? encryptToken(keys.join(",")) : null, now);
+}
+
+function addNetlasKey(rawKey) {
+  const nextKey = String(rawKey || "").trim();
+  if (!nextKey) {
+    throw new Error("Netlas key is required");
+  }
+
+  ensureProviderSettings();
+  const { db } = getDbState();
+  const now = nowIso();
+  const row = db
+    .prepare("SELECT token_encrypted, enabled FROM provider_settings WHERE provider = 'netlas' LIMIT 1")
+    .get();
+
+  const currentToken = row?.token_encrypted ? decryptToken(row.token_encrypted).trim() : "";
+  const keys = parseNetlasKeys(currentToken);
+  if (!keys.includes(nextKey)) {
+    keys.push(nextKey);
+  }
+
+  db.prepare(`
+    UPDATE provider_settings
+    SET token_encrypted = ?, enabled = 1, updated_at = ?
+    WHERE provider = 'netlas'
+  `).run(encryptToken(keys.join(",")), now);
+}
+
+function removeNetlasKey(index) {
+  ensureProviderSettings();
+  const keyIndex = Number.parseInt(String(index), 10);
+  if (!Number.isInteger(keyIndex) || keyIndex < 0) {
+    throw new Error("Invalid Netlas key index");
+  }
+
+  const { db } = getDbState();
+  const now = nowIso();
+  const row = db
+    .prepare("SELECT token_encrypted, enabled FROM provider_settings WHERE provider = 'netlas' LIMIT 1")
+    .get();
+
+  const currentToken = row?.token_encrypted ? decryptToken(row.token_encrypted).trim() : "";
+  const keys = parseNetlasKeys(currentToken);
+  if (keyIndex >= keys.length) {
+    throw new Error("Netlas key index is out of range");
+  }
+
+  keys.splice(keyIndex, 1);
+
+  db.prepare(`
+    UPDATE provider_settings
+    SET token_encrypted = ?, updated_at = ?
+    WHERE provider = 'netlas'
   `).run(keys.length ? encryptToken(keys.join(",")) : null, now);
 }
 
@@ -301,9 +366,12 @@ function getProviderRuntimeSettings() {
 
 module.exports = {
   addIntelxKey,
+  addNetlasKey,
   ensureProviderSettings,
   listProviderSettings,
+  parseNetlasKeys,
   removeIntelxKey,
+  removeNetlasKey,
   updateProviderSetting,
   buildProviderConfigYaml,
   getProviderRuntimeSettings,

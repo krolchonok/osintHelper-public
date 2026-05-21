@@ -3,8 +3,10 @@ const { z } = require("zod");
 const { requireApiUser } = require("../lib/auth");
 const {
   addIntelxKey,
+  addNetlasKey,
   listProviderSettings,
   removeIntelxKey,
+  removeNetlasKey,
   updateProviderSetting,
   getProviderRuntimeSettings,
 } = require("../lib/provider-settings");
@@ -108,6 +110,40 @@ router.delete("/providers/intelx/keys/:index", requireApiUser("ADMIN"), (req, re
     res.json({ ok: true, provider });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to remove IntelX key";
+    res.status(400).json({ error: message });
+  }
+});
+
+router.post("/providers/netlas/keys", requireApiUser("ADMIN"), (req, res) => {
+  const parsed = intelxKeySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    addNetlasKey(parsed.data.key);
+    const provider = listProviderSettings().find((item) => item.provider === "netlas") || null;
+    res.json({ ok: true, provider });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to add Netlas key";
+    res.status(400).json({ error: message });
+  }
+});
+
+router.delete("/providers/netlas/keys/:index", requireApiUser("ADMIN"), (req, res) => {
+  const index = Number.parseInt(String(req.params.index || ""), 10);
+  if (!Number.isInteger(index) || index < 0) {
+    res.status(400).json({ error: "Invalid Netlas key index" });
+    return;
+  }
+
+  try {
+    removeNetlasKey(index);
+    const provider = listProviderSettings().find((item) => item.provider === "netlas") || null;
+    res.json({ ok: true, provider });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to remove Netlas key";
     res.status(400).json({ error: message });
   }
 });
