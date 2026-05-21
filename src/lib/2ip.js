@@ -102,4 +102,4 @@ async function fetch2ipAll(domain, ip, rawToken) {
   };
 }
 
-module.exports = { fetch2ipAll, fetch2ipMac, parse2ipKeys };
+module.exports = { fetch2ipAll, fetch2ipMac, fetch2ipProvider, parse2ipKeys, create2ipKeyRotator };

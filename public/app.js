@@ -1692,10 +1692,15 @@
         ? entry.hosts.map((h) => `<span class="pill tiny mono">${escapeHtml(h)}</span>`).join(" ")
         : "—";
 
+      const siteHtml = entry.site
+        ? `<a href="${escapeHtml(entry.site)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(entry.site)}</a>`
+        : "—";
+
       return `
         <tr>
           <td class="mono"><strong>${escapeHtml(entry.asn || "—")}</strong></td>
           <td>${escapeHtml(entry.org || "—")}</td>
+          <td>${siteHtml}</td>
           <td>${escapeHtml(entry.country || "—")}</td>
           <td>${escapeHtml(entry.rir || "—")}</td>
           <td>${cidrsHtml}</td>
@@ -1714,6 +1719,7 @@
             <tr>
               <th>ASN</th>
               <th>Организация</th>
+              <th>Сайт</th>
               <th>Страна</th>
               <th>RIR</th>
               <th>CIDR</th>

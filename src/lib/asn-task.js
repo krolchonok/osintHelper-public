@@ -1,6 +1,8 @@
 const { Resolver } = require("node:dns/promises");
 const { getDbState } = require("../db");
 const { clampProgress, nowIso } = require("./utils");
+const { fetch2ipProvider, parse2ipKeys, create2ipKeyRotator } = require("./2ip");
+const { getProviderRuntimeSettings } = require("./provider-settings");
 
 function reverseIpv4(ip) {
   return ip.split(".").reverse().join(".") + ".origin.asn.cymru.com";
@@ -151,13 +153,38 @@ async function executeAsnTask(projectId, onProgress) {
     if (asnMap.has(asnNum)) asnMap.get(asnNum).org = name;
   }
 
-  await emit(93, "Сохранение результатов");
+  const providerSettings = getProviderRuntimeSettings();
+  const twoIpSetting = providerSettings.find((s) => s.provider === "2ip" && s.enabled && s.token);
+  if (twoIpSetting) {
+    await emit(93, "Запрос сайтов провайдеров (2ip)");
+    const rotator = create2ipKeyRotator(parse2ipKeys(twoIpSetting.token));
+    const asnEntries = Array.from(asnMap.values());
+    await mapWithConcurrency(asnEntries, async (entry, i) => {
+      const ip = entry.ips[0];
+      if (!ip) return;
+      try {
+        const data = await fetch2ipProvider(ip, rotator);
+        entry.site = data?.site || "";
+      } catch {
+        entry.site = "";
+      }
+      await emit(
+        93 + Math.floor(((i + 1) / asnEntries.length) * 4),
+        `2ip provider: AS${entry.asnNum}`,
+        i + 1,
+        asnEntries.length,
+      );
+    }, 3);
+  }
+
+  await emit(97, "Сохранение результатов");
 
   const asns = Array.from(asnMap.values())
     .map((entry) => ({
       asn: `AS${entry.asnNum}`,
       asnNum: entry.asnNum,
       org: entry.org || "",
+      site: entry.site || "",
       country: entry.country,
       rir: entry.rir,
       ips: [...entry.ips].sort(),
@@ -182,7 +209,7 @@ async function executeAsnTask(projectId, onProgress) {
     DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at
   `).run(projectId, JSON.stringify(data), now, now);
 
-  await emit(98, "ASN задача завершена");
+  await emit(99, "ASN задача завершена");
   return { ok: true, asns: asns.length, ips: ips.length };
 }
 
