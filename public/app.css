@@ -1051,6 +1051,18 @@ body.ui-theme-bright .error-cell {
   margin-top: 10px;
 }
 
+.intelx-limits-panel .panel-header {
+  align-items: flex-start;
+}
+
+.intelx-limits-result {
+  margin-top: 14px;
+}
+
+.intelx-limits-result:empty {
+  display: none;
+}
+
 .provider-row-intelx td {
   vertical-align: top;
 }

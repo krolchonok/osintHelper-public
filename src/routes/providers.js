@@ -9,6 +9,8 @@ const {
   getProviderRuntimeSettings,
 } = require("../lib/provider-settings");
 const { checkProviderLimit } = require("../lib/provider-limit-check");
+const { getDbState } = require("../db");
+const { nowIso } = require("../lib/utils");
 
 const router = express.Router();
 
@@ -108,6 +110,50 @@ router.delete("/providers/intelx/keys/:index", requireApiUser("ADMIN"), (req, re
     const message = error instanceof Error ? error.message : "Failed to remove IntelX key";
     res.status(400).json({ error: message });
   }
+});
+
+const DEFAULT_LABOR_SETTINGS = {
+  recon: 8,
+  infraVuln: 16,
+  softwareVuln: 24,
+};
+
+const laborSettingsSchema = z.object({
+  recon: z.number().int().min(0).max(10000),
+  infraVuln: z.number().int().min(0).max(10000),
+  softwareVuln: z.number().int().min(0).max(10000),
+});
+
+router.get("/labor", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const row = db.prepare("SELECT settings_json FROM labor_settings WHERE id = 1 LIMIT 1").get();
+  if (!row) {
+    res.json({ settings: DEFAULT_LABOR_SETTINGS });
+    return;
+  }
+  let settings;
+  try {
+    settings = JSON.parse(row.settings_json);
+  } catch {
+    settings = DEFAULT_LABOR_SETTINGS;
+  }
+  res.json({ settings });
+});
+
+router.put("/labor", requireApiUser(), (req, res) => {
+  const parsed = laborSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const { db } = getDbState();
+  const settingsJson = JSON.stringify(parsed.data);
+  db.prepare(`
+    INSERT INTO labor_settings (id, settings_json, updated_at)
+    VALUES (1, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET settings_json = excluded.settings_json, updated_at = excluded.updated_at
+  `).run(settingsJson, nowIso());
+  res.json({ ok: true, settings: parsed.data });
 });
 
 module.exports = { providersRouter: router };

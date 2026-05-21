@@ -26,7 +26,7 @@ function initSchema(db) {
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      domain TEXT UNIQUE,
+      domain TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -34,7 +34,7 @@ function initSchema(db) {
     CREATE TABLE IF NOT EXISTS project_domains (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
-      domain TEXT NOT NULL UNIQUE,
+      domain TEXT NOT NULL,
       is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -249,6 +249,12 @@ function initSchema(db) {
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_scan_jobs_status_created ON scan_jobs(status, created_at);
+
+    CREATE TABLE IF NOT EXISTS labor_settings (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      settings_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -327,7 +333,7 @@ function migrateProjectsTable(db) {
       CREATE TABLE projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        domain TEXT UNIQUE,
+        domain TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -342,6 +348,102 @@ function migrateProjectsTable(db) {
       FROM projects_legacy;
 
       DROP TABLE projects_legacy;
+    `);
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function migrateProjectsDomainNotUnique(db) {
+  const row = db
+    .prepare(`
+      SELECT sql
+      FROM sqlite_schema
+      WHERE type = 'table'
+        AND name = 'projects'
+        AND sql IS NOT NULL
+      LIMIT 1
+    `)
+    .get();
+  const createSql = String(row?.sql || "");
+  if (!/\bdomain\s+TEXT\s+UNIQUE\b/i.test(createSql)) {
+    return;
+  }
+
+  const columns = db.prepare("PRAGMA table_info(projects)").all();
+  const columnNames = new Set(columns.map((column) => String(column.name)));
+  const supportedColumns = ["id", "name", "domain", "created_at", "updated_at", "labor_scope_json"];
+  const copyColumns = supportedColumns.filter((column) => columnNames.has(column));
+  const columnList = copyColumns.map((column) => `"${column}"`).join(", ");
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec(`
+      CREATE TABLE projects__domain_scope_migration (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        domain TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        labor_scope_json TEXT
+      );
+    `);
+
+    if (columnList) {
+      db.exec(`
+        INSERT INTO projects__domain_scope_migration (${columnList})
+        SELECT ${columnList}
+        FROM projects;
+      `);
+    }
+
+    db.exec(`
+      DROP TABLE projects;
+      ALTER TABLE projects__domain_scope_migration RENAME TO projects;
+    `);
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function migrateProjectDomainsDomainNotUnique(db) {
+  const row = db
+    .prepare(`
+      SELECT sql
+      FROM sqlite_schema
+      WHERE type = 'table'
+        AND name = 'project_domains'
+        AND sql IS NOT NULL
+      LIMIT 1
+    `)
+    .get();
+  const createSql = String(row?.sql || "");
+  if (!/\bdomain\s+TEXT\s+NOT\s+NULL\s+UNIQUE\b/i.test(createSql)) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec(`
+      CREATE TABLE project_domains__domain_scope_migration (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(project_id, domain),
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+
+      INSERT INTO project_domains__domain_scope_migration (
+        id, project_id, domain, is_primary, created_at, updated_at
+      )
+      SELECT id, project_id, domain, is_primary, created_at, updated_at
+      FROM project_domains;
+
+      DROP TABLE project_domains;
+      ALTER TABLE project_domains__domain_scope_migration RENAME TO project_domains;
     `);
   } finally {
     db.exec("PRAGMA foreign_keys = ON");
@@ -449,6 +551,8 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
   initSchema(db);
   migrateProjectsTable(db);
   repairLegacyProjectsForeignKeys(db);
+  migrateProjectsDomainNotUnique(db);
+  migrateProjectDomainsDomainNotUnique(db);
   migrateProviderScanScopes(db);
   initSchema(db);
   ensureColumnExists(
@@ -492,6 +596,12 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
     "scan_jobs",
     "task_payload",
     "ALTER TABLE scan_jobs ADD COLUMN task_payload TEXT",
+  );
+  ensureColumnExists(
+    db,
+    "projects",
+    "labor_scope_json",
+    "ALTER TABLE projects ADD COLUMN labor_scope_json TEXT",
   );
 
   const legacyProjects = db

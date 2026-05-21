@@ -7,9 +7,22 @@ const INTELX_BUCKETS = [
 ];
 const SEARCH_PAGE_LIMIT = 1000;
 const MAX_RESULTS = 1000;
-const MAX_CONCURRENCY = 6;
+const MAX_CONCURRENCY = 40;
 const MAX_RETRIES = 3;
 const REQUEST_TIMEOUT_MS = 20000;
+const MAX_FILE_CONCURRENCY_LIMIT = 80;
+
+function parseBoundedEnvInt(name, defaultValue, maxValue) {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value < 1) {
+    return defaultValue;
+  }
+  return Math.max(1, Math.min(Math.floor(value), maxValue));
+}
+
+function getIntelxFileConcurrency() {
+  return parseBoundedEnvInt("INTELX_FILE_CONCURRENCY", MAX_CONCURRENCY, MAX_FILE_CONCURRENCY_LIMIT);
+}
 
 function parseIntelxKeys(rawToken) {
   return String(rawToken || "")
@@ -129,7 +142,7 @@ function createIntelxClient(rawToken) {
         buckets: INTELX_BUCKETS,
         lookuplevel: 0,
         maxresults: MAX_RESULTS,
-        timeout: null,
+        timeout: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
         datefrom: "",
         dateto: "",
         sort: 2,
@@ -212,9 +225,10 @@ function createIntelxClient(rawToken) {
       }));
   }
 
-  async function runWithConcurrency(tasks, concurrency = MAX_CONCURRENCY) {
+  async function runWithConcurrency(tasks, concurrency = MAX_CONCURRENCY, onProgress = null) {
     const results = [];
     let index = 0;
+    let completed = 0;
 
     async function worker() {
       while (index < tasks.length) {
@@ -224,6 +238,10 @@ function createIntelxClient(rawToken) {
           results[current] = await tasks[current]();
         } catch (error) {
           results[current] = { error: error instanceof Error ? error.message : String(error) };
+        }
+        completed += 1;
+        if (onProgress) {
+          await onProgress(completed, tasks.length);
         }
       }
     }
@@ -235,9 +253,15 @@ function createIntelxClient(rawToken) {
     return results;
   }
 
-  async function searchLeaks(searchTerm) {
+  async function searchLeaks(searchTerm, options = {}) {
     const seenStorageIds = new Set();
     const jobs = [];
+    const warnings = [];
+    const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+    const fileConcurrency = Math.max(
+      1,
+      Math.min(Number(options.fileConcurrency) || getIntelxFileConcurrency(), MAX_FILE_CONCURRENCY_LIMIT),
+    );
 
     const searchId = await startSearch(searchTerm);
     const page = await getOnePage(searchId);
@@ -259,9 +283,16 @@ function createIntelxClient(rawToken) {
       };
     }
 
-    const results = await runWithConcurrency(jobs, MAX_CONCURRENCY);
+    if (page.length >= SEARCH_PAGE_LIMIT) {
+      warnings.push("IntelX returned a full page of results; some matches may be truncated.");
+    }
+
+    if (onProgress) {
+      await onProgress(0, jobs.length);
+    }
+
+    const results = await runWithConcurrency(jobs, fileConcurrency, onProgress);
     const uniqueHits = new Map();
-    const warnings = [];
 
     for (const row of results) {
       if (!Array.isArray(row)) {
@@ -288,10 +319,6 @@ function createIntelxClient(rawToken) {
           });
         }
       }
-    }
-
-    if (page.length >= SEARCH_PAGE_LIMIT) {
-      warnings.push("IntelX returned a full page of results; some matches may be truncated.");
     }
 
     return {

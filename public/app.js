@@ -1727,6 +1727,187 @@
     `;
   }
 
+  function cidrHostCount(cidr) {
+    const slash = cidr.lastIndexOf("/");
+    if (slash === -1) return 1;
+    const prefix = Number.parseInt(cidr.slice(slash + 1), 10);
+    if (!Number.isFinite(prefix) || prefix < 0 || prefix > 32) return 0;
+    if (prefix === 32) return 1;
+    if (prefix === 31) return 2;
+    return Math.pow(2, 32 - prefix) - 2;
+  }
+
+  function buildLaborPanel(asnData, laborScope, laborSettings) {
+    const norms = laborSettings || { recon: 8, infraVuln: 16, softwareVuln: 24 };
+    const asns = asnData && Array.isArray(asnData.asns) ? asnData.asns : [];
+    const scopeSet = laborScope && Array.isArray(laborScope) ? new Set(laborScope) : null;
+
+    const subdomainCount = Number(
+      (document.getElementById("subdomains-status-text") && "") || 0
+    );
+
+    let asnHostCount = 0;
+    let asnScopeRows = "";
+    if (asns.length) {
+      for (const entry of asns) {
+        const cidrs = Array.isArray(entry.cidrs) ? entry.cidrs : [];
+        const cidrHostsForAsn = cidrs.reduce((sum, c) => sum + cidrHostCount(c), 0);
+        const checked = scopeSet === null || scopeSet.has(entry.asn) ? "checked" : "";
+        if (checked) asnHostCount += cidrHostsForAsn;
+        const cidrsHtml = cidrs.length
+          ? cidrs.map((c) => `<span class="pill tiny mono">${escapeHtml(c)}</span>`).join(" ")
+          : "—";
+        asnScopeRows += `
+          <tr>
+            <td><input type="checkbox" class="labor-asn-check" data-asn="${escapeHtml(entry.asn || "")}" data-hosts="${cidrHostsForAsn}" ${checked} /></td>
+            <td class="mono"><strong>${escapeHtml(entry.asn || "—")}</strong></td>
+            <td>${escapeHtml(entry.org || "—")}</td>
+            <td>${escapeHtml(entry.country || "—")}</td>
+            <td>${cidrsHtml}</td>
+            <td class="mono labor-asn-host-count">${escapeHtml(String(cidrHostsForAsn))}</td>
+          </tr>
+        `;
+      }
+    }
+
+    const noAsnWarning = !asns.length
+      ? '<p class="hint" style="margin-top:8px">ASN-данные ещё не загружены — запустите ASN-лукап на вкладке ASN.</p>'
+      : "";
+
+    return `
+      <div class="stack-md">
+        <div class="panel" style="padding:16px">
+          <div class="panel-header" style="margin-bottom:12px">
+            <h3 style="margin:0">Нормативы (часов на хост)</h3>
+            <span class="hint">Глобальные настройки</span>
+          </div>
+          <div class="row wrap" style="gap:16px;align-items:flex-end">
+            <label class="stack-sm" style="flex:1;min-width:140px">
+              <span class="hint">Сбор данных</span>
+              <input id="labor-norm-recon" class="text-input" type="number" min="0" max="10000" value="${escapeHtml(String(norms.recon))}" style="width:100%" />
+            </label>
+            <label class="stack-sm" style="flex:1;min-width:140px">
+              <span class="hint">Выявл. уязв. инфраструктуры</span>
+              <input id="labor-norm-infra" class="text-input" type="number" min="0" max="10000" value="${escapeHtml(String(norms.infraVuln))}" style="width:100%" />
+            </label>
+            <label class="stack-sm" style="flex:1;min-width:140px">
+              <span class="hint">Выявл. уязв. в ПО</span>
+              <input id="labor-norm-software" class="text-input" type="number" min="0" max="10000" value="${escapeHtml(String(norms.softwareVuln))}" style="width:100%" />
+            </label>
+            <button class="btn btn-primary" id="labor-save-norms-btn" type="button">Сохранить</button>
+          </div>
+          <div id="labor-norms-message" style="margin-top:8px"></div>
+        </div>
+
+        <div class="panel" style="padding:16px">
+          <div class="panel-header" style="margin-bottom:12px">
+            <h3 style="margin:0">Скоуп ASN для расчёта</h3>
+            <span class="hint">Отметьте нужные ASN-зоны</span>
+          </div>
+          ${noAsnWarning}
+          ${asns.length ? `
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width:32px"></th>
+                  <th>ASN</th>
+                  <th>Организация</th>
+                  <th>Страна</th>
+                  <th>CIDR</th>
+                  <th>Хостов</th>
+                </tr>
+              </thead>
+              <tbody>${asnScopeRows}</tbody>
+            </table>
+          </div>
+          ` : ""}
+        </div>
+
+        <div id="labor-calc-root"></div>
+      </div>
+    `;
+  }
+
+  function renderLaborCalc(asnData, laborScope, laborSettings, subdomainsTotal) {
+    const norms = laborSettings || { recon: 8, infraVuln: 16, softwareVuln: 24 };
+    const asns = asnData && Array.isArray(asnData.asns) ? asnData.asns : [];
+    const scopeSet = laborScope && Array.isArray(laborScope) ? new Set(laborScope) : null;
+
+    let asnHostCount = 0;
+    for (const entry of asns) {
+      const inScope = scopeSet === null || scopeSet.has(entry.asn);
+      if (!inScope) continue;
+      const cidrs = Array.isArray(entry.cidrs) ? entry.cidrs : [];
+      asnHostCount += cidrs.reduce((sum, c) => sum + cidrHostCount(c), 0);
+    }
+
+    const totalHosts = subdomainsTotal + asnHostCount;
+    const reconHours = totalHosts * norms.recon;
+    const infraHours = totalHosts * norms.infraVuln;
+    const softwareHours = totalHosts * norms.softwareVuln;
+    const totalHours = reconHours + infraHours + softwareHours;
+    const totalDays = totalHours > 0 ? Math.ceil(totalHours / 8) : 0;
+
+    const calcRoot = document.getElementById("labor-calc-root");
+    if (!calcRoot) return;
+    calcRoot.innerHTML = `
+      <div class="panel" style="padding:16px">
+        <div class="panel-header" style="margin-bottom:12px">
+          <h3 style="margin:0">Расчёт трудозатрат</h3>
+          <span class="hint">Внешний пентест</span>
+        </div>
+        <div class="data-stat-grid" style="margin-bottom:16px">
+          <div class="data-stat-card">
+            <div class="data-stat-value mono">${escapeHtml(String(subdomainsTotal))}</div>
+            <div class="data-stat-label">Поддомены</div>
+          </div>
+          <div class="data-stat-card">
+            <div class="data-stat-value mono">${escapeHtml(String(asnHostCount))}</div>
+            <div class="data-stat-label">IP из ASN (по маске)</div>
+          </div>
+          <div class="data-stat-card">
+            <div class="data-stat-value mono"><strong>${escapeHtml(String(totalHosts))}</strong></div>
+            <div class="data-stat-label">Итого хостов</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Категория</th><th>Норма (ч/хост)</th><th>Часов</th><th>Дней (÷8)</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Сбор данных внешних ресурсов</td>
+                <td class="mono">${escapeHtml(String(norms.recon))}</td>
+                <td class="mono">${escapeHtml(String(reconHours))}</td>
+                <td class="mono">${reconHours > 0 ? Math.ceil(reconHours / 8) : 0}</td>
+              </tr>
+              <tr>
+                <td>Выявление уязвимостей инфраструктуры</td>
+                <td class="mono">${escapeHtml(String(norms.infraVuln))}</td>
+                <td class="mono">${escapeHtml(String(infraHours))}</td>
+                <td class="mono">${infraHours > 0 ? Math.ceil(infraHours / 8) : 0}</td>
+              </tr>
+              <tr>
+                <td>Выявление уязвимостей в ПО</td>
+                <td class="mono">${escapeHtml(String(norms.softwareVuln))}</td>
+                <td class="mono">${escapeHtml(String(softwareHours))}</td>
+                <td class="mono">${softwareHours > 0 ? Math.ceil(softwareHours / 8) : 0}</td>
+              </tr>
+              <tr style="font-weight:600">
+                <td>Итого</td>
+                <td>—</td>
+                <td class="mono">${escapeHtml(String(totalHours))}</td>
+                <td class="mono">${escapeHtml(String(totalDays))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
   function formatDorkCount(value) {
     if (value === null || value === undefined || value === "") {
       return "-";
@@ -2088,6 +2269,8 @@
     let intelxData = null;
     let emailData = project.emails || null;
     let asnData = project.asn || null;
+    let laborScope = null;
+    let laborSettings = null;
     let activeDataTab = "subdomains";
     const selectedSubdomainIds = new Set();
     const selectedEmailSourceKeys = new Set();
@@ -2188,6 +2371,7 @@
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
               <button class="btn btn-ghost" id="tab-asn-btn" type="button">ASN</button>
+              <button class="btn btn-ghost" id="tab-labor-btn" type="button">Трудозатраты</button>
             </div>
             <div id="subdomains-panel" class="project-data-panel">
             <div class="stack-md project-data-toolbar-stack">
@@ -2332,6 +2516,9 @@
               <div id="asn-action-message"></div>
               <div id="asn-table-root"></div>
             </div>
+            <div id="labor-panel" class="project-data-panel" hidden>
+              <div id="labor-panel-root"></div>
+            </div>
             <div class="project-data-panel">
               <div class="row wrap project-panel-toolbar">
                 <button class="btn btn-danger" id="delete-project-btn" type="button">Удалить проект</button>
@@ -2388,6 +2575,7 @@
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const tabAsnBtn = document.getElementById("tab-asn-btn");
+    const tabLaborBtn = document.getElementById("tab-labor-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
     const webarchivePanel = document.getElementById("webarchive-panel");
@@ -2396,6 +2584,8 @@
     const vtDeepPanel = document.getElementById("vtdeep-panel");
     const intelxPanel = document.getElementById("intelx-panel");
     const asnPanel = document.getElementById("asn-panel");
+    const laborPanel = document.getElementById("labor-panel");
+    const laborPanelRoot = document.getElementById("labor-panel-root");
     const asnActionMessageEl = document.getElementById("asn-action-message");
     const asnTableRoot = document.getElementById("asn-table-root");
     const runAsnBtn = document.getElementById("run-asn-btn");
@@ -2535,6 +2725,7 @@
       const showVtDeep = activeDataTab === "vtdeep";
       const showIntelx = activeDataTab === "intelx";
       const showAsn = activeDataTab === "asn";
+      const showLabor = activeDataTab === "labor";
       subdomainsPanel.hidden = !showSubdomains;
       whoisPanel.hidden = !showWhois;
       webarchivePanel.hidden = !showWebarchive;
@@ -2543,6 +2734,7 @@
       vtDeepPanel.hidden = !showVtDeep;
       intelxPanel.hidden = !showIntelx;
       asnPanel.hidden = !showAsn;
+      laborPanel.hidden = !showLabor;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
       tabWebarchiveBtn.className = showWebarchive ? "btn btn-primary" : "btn btn-ghost";
@@ -2551,6 +2743,7 @@
       tabVtDeepBtn.className = showVtDeep ? "btn btn-primary" : "btn btn-ghost";
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
       tabAsnBtn.className = showAsn ? "btn btn-primary" : "btn btn-ghost";
+      tabLaborBtn.className = showLabor ? "btn btn-primary" : "btn btn-ghost";
     }
 
     function createRunsSignature(list) {
@@ -2846,6 +3039,63 @@
       asnTableRoot.innerHTML = buildAsnTable(asnData);
     }
 
+    function renderLabor() {
+      const subdomainsTotal = subdomainsPagination ? subdomainsPagination.total : 0;
+      laborPanelRoot.innerHTML = buildLaborPanel(asnData, laborScope, laborSettings);
+      renderLaborCalc(asnData, laborScope, laborSettings, subdomainsTotal);
+
+      document.querySelectorAll(".labor-asn-check").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const allChecks = Array.from(document.querySelectorAll(".labor-asn-check"));
+          laborScope = allChecks.filter((cb) => cb.checked).map((cb) => cb.dataset.asn);
+          renderLaborCalc(asnData, laborScope, laborSettings, subdomainsTotal);
+          api(`/api/projects/${encodeURIComponent(projectId)}/labor-scope`, {
+            method: "PUT",
+            body: { scope: laborScope },
+          }).catch(() => {});
+        });
+      });
+
+      const saveNormsBtn = document.getElementById("labor-save-norms-btn");
+      const normsMessageEl = document.getElementById("labor-norms-message");
+      if (saveNormsBtn) {
+        saveNormsBtn.addEventListener("click", async () => {
+          const recon = Number.parseInt(document.getElementById("labor-norm-recon").value, 10) || 0;
+          const infraVuln = Number.parseInt(document.getElementById("labor-norm-infra").value, 10) || 0;
+          const softwareVuln = Number.parseInt(document.getElementById("labor-norm-software").value, 10) || 0;
+          saveNormsBtn.disabled = true;
+          normsMessageEl.innerHTML = "";
+          try {
+            const result = await api("/api/settings/labor", {
+              method: "PUT",
+              body: { recon, infraVuln, softwareVuln },
+            });
+            laborSettings = result.settings;
+            normsMessageEl.innerHTML = renderSuccessBanner("Нормативы сохранены");
+            renderLaborCalc(asnData, laborScope, laborSettings, subdomainsTotal);
+          } catch (error) {
+            normsMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось сохранить нормативы"));
+          } finally {
+            saveNormsBtn.disabled = false;
+          }
+        });
+      }
+    }
+
+    async function refreshLaborInfo() {
+      try {
+        const [scopeResult, settingsResult] = await Promise.all([
+          api(`/api/projects/${encodeURIComponent(projectId)}/labor-scope`),
+          api("/api/settings/labor"),
+        ]);
+        laborScope = scopeResult && scopeResult.scope ? scopeResult.scope : null;
+        laborSettings = settingsResult && settingsResult.settings ? settingsResult.settings : null;
+      } catch {
+        // non-fatal
+      }
+      if (activeDataTab === "labor") renderLabor();
+    }
+
     function renderActiveDataTabContent() {
       if (activeDataTab === "subdomains") {
         renderSubdomains();
@@ -2863,6 +3113,8 @@
         renderIntelx();
       } else if (activeDataTab === "asn") {
         renderAsn();
+      } else if (activeDataTab === "labor") {
+        renderLabor();
       }
     }
 
@@ -3952,6 +4204,12 @@
       }
     });
 
+    tabLaborBtn.addEventListener("click", () => {
+      activeDataTab = "labor";
+      renderDataTab();
+      void refreshLaborInfo();
+    });
+
     runAsnBtn.addEventListener("click", async () => {
       asnActionMessageEl.innerHTML = "";
       runAsnBtn.disabled = true;
@@ -4557,6 +4815,7 @@
     const providers = Array.isArray(payload && payload.providers)
       ? payload.providers
       : [];
+    const intelxProvider = providers.find((provider) => provider.provider === "intelx") || null;
 
     const rows = providers
       .map(
@@ -4677,6 +4936,20 @@
           <p>Токены шифруются при хранении (AES-256-GCM в SQLite).</p>
         </section>
 
+        ${intelxProvider ? `
+          <section class="panel intelx-limits-panel">
+            <div class="panel-header">
+              <div>
+                <h2>IntelX лимиты</h2>
+                <p>${intelxProvider.hasToken ? `${Number(intelxProvider.tokenPartsCount) || 0} ключей подключено` : "Ключи не добавлены"}</p>
+              </div>
+              <button class="btn btn-primary" id="intelx-limits-check-btn" type="button">Показать остатки</button>
+            </div>
+            <div id="intelx-limits-message" class="hint"></div>
+            <div id="intelx-limits-result" class="intelx-limits-result"></div>
+          </section>
+        ` : ""}
+
         <section class="panel">
           <div class="panel-header">
             <h2>Провайдеры</h2>
@@ -4700,6 +4973,48 @@
         </section>
       </div>
     `;
+
+    const intelxLimitsCheckBtn = document.getElementById("intelx-limits-check-btn");
+    const intelxLimitsMessage = document.getElementById("intelx-limits-message");
+    const intelxLimitsResult = document.getElementById("intelx-limits-result");
+
+    function setIntelxLimitsMessage(message, kind = "") {
+      if (!intelxLimitsMessage) {
+        return;
+      }
+      intelxLimitsMessage.textContent = message || "";
+      intelxLimitsMessage.style.color = kind === "error" ? "#8a1919" : "";
+    }
+
+    async function checkIntelxLimits() {
+      if (!intelxLimitsCheckBtn || !intelxLimitsResult) {
+        return;
+      }
+
+      intelxLimitsCheckBtn.disabled = true;
+      setIntelxLimitsMessage("Проверка IntelX лимитов...");
+      intelxLimitsResult.innerHTML = "";
+
+      try {
+        const payload = await api("/api/settings/providers/check-limit", {
+          method: "POST",
+          body: { provider: "intelx" },
+        });
+        const result = payload && payload.result ? payload.result : null;
+        setIntelxLimitsMessage(formatProviderCheckMessage("intelx", result));
+        intelxLimitsResult.innerHTML = buildIntelxQuotaMarkup(result);
+      } catch (error) {
+        setIntelxLimitsMessage(friendlyError(error, "Не удалось проверить IntelX лимиты"), "error");
+      } finally {
+        intelxLimitsCheckBtn.disabled = false;
+      }
+    }
+
+    if (intelxLimitsCheckBtn) {
+      intelxLimitsCheckBtn.addEventListener("click", () => {
+        void checkIntelxLimits();
+      });
+    }
 
     const providerRows = appEl.querySelectorAll(".provider-row");
 

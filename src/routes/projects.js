@@ -1321,14 +1321,6 @@ router.post("/:id/domains", requireApiUser(), (req, res) => {
     return;
   }
 
-  const existingOwner = db
-    .prepare("SELECT project_id FROM project_domains WHERE domain = ? LIMIT 1")
-    .get(domain);
-  if (existingOwner && String(existingOwner.project_id) !== String(project.id)) {
-    res.status(409).json({ error: "This domain already belongs to another project" });
-    return;
-  }
-
   const now = nowIso();
   const tx = db.transaction(() => {
     upsertProjectDomain(project.id, domain, { isPrimary: false });
@@ -2687,6 +2679,41 @@ router.post("/:id/asn-task", requireApiUser(), (req, res) => {
     taskKind: "ASN",
   });
   res.json({ ok: true, runId: run.id, taskKind: "ASN" });
+});
+
+router.get("/:id/labor-scope", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, labor_scope_json FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  let scope = null;
+  try {
+    scope = project.labor_scope_json ? JSON.parse(project.labor_scope_json) : null;
+  } catch {
+    scope = null;
+  }
+  res.json({ scope });
+});
+
+router.put("/:id/labor-scope", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const { scope } = req.body;
+  if (!Array.isArray(scope)) {
+    res.status(400).json({ error: "scope must be an array of ASN strings" });
+    return;
+  }
+  const validScope = scope.filter((asn) => typeof asn === "string" && asn.length < 32);
+  db.prepare("UPDATE projects SET labor_scope_json = ? WHERE id = ?").run(JSON.stringify(validScope), id);
+  res.json({ ok: true, scope: validScope });
 });
 
 router.post("/:id/whois-task", requireApiUser(), (req, res) => {

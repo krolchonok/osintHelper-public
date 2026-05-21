@@ -53,7 +53,19 @@ async function executeIntelxLeaksTask(projectId, onProgress, options = null) {
       index,
       terms.length,
     );
-    const result = await client.searchLeaks(term);
+    const termStartProgress = 15 + Math.round((index / Math.max(terms.length, 1)) * 60);
+    const termEndProgress = 15 + Math.round(((index + 1) / Math.max(terms.length, 1)) * 60);
+    const result = await client.searchLeaks(term, {
+      onProgress: async (processedFiles, totalFiles) => {
+        const ratio = totalFiles > 0 ? processedFiles / totalFiles : 0;
+        await emit(
+          Math.min(85, Math.round(termStartProgress + ((termEndProgress - termStartProgress) * ratio))),
+          `IntelX files for ${term}: ${processedFiles}/${totalFiles}`,
+          processedFiles,
+          totalFiles,
+        );
+      },
+    });
     searches.push({
       term,
       hits: result.hits.map((hit) => ({

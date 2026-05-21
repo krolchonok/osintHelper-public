@@ -6,6 +6,16 @@ const { clampProgress, createId, nowIso } = require("./utils");
 const FAST_RESOLVERS = ["8.8.8.8"];
 const EXTENDED_RESOLVERS = ["8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1"];
 const timeoutMs = 5000;
+const DEFAULT_DNS_RESOLVE_CONCURRENCY = 32;
+const MAX_DNS_RESOLVE_CONCURRENCY = 128;
+
+function getDnsResolveConcurrency() {
+  const value = Number(process.env.DNS_RESOLVE_CONCURRENCY);
+  if (!Number.isFinite(value) || value < 1) {
+    return DEFAULT_DNS_RESOLVE_CONCURRENCY;
+  }
+  return Math.max(1, Math.min(Math.floor(value), MAX_DNS_RESOLVE_CONCURRENCY));
+}
 
 function getResolversForScope(scanScope) {
   if (scanScope === "core") {
@@ -230,11 +240,23 @@ async function executeDnsResolve(projectId, onProgress, scanScope = "core", opti
   });
 
   let inserted = 0;
-  const totalSteps = Math.max(hostEntries.length * resolvers.length, 1);
+  const checks = hostEntries.flatMap((hostEntry) =>
+    resolvers.map((resolverIp) => ({
+      hostEntry,
+      resolverIp,
+    })),
+  );
+  const totalSteps = Math.max(checks.length, 1);
+  const concurrency = Math.max(1, Math.min(getDnsResolveConcurrency(), checks.length || 1));
+  let nextIndex = 0;
   let processedSteps = 0;
 
-  for (const hostEntry of hostEntries) {
-    for (const resolverIp of resolvers) {
+  async function worker() {
+    while (nextIndex < checks.length) {
+      const checkIndex = nextIndex;
+      nextIndex += 1;
+      const { hostEntry, resolverIp } = checks[checkIndex];
+
       await emit(
         onProgress,
         Math.round(15 + (processedSteps / totalSteps) * 80),
@@ -260,6 +282,8 @@ async function executeDnsResolve(projectId, onProgress, scanScope = "core", opti
       );
     }
   }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
   await emit(onProgress, 98, "DNS resolve completed", processedSteps, totalSteps);
   return { hosts: hostEntries.length, records: inserted };
