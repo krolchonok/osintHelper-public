@@ -2,9 +2,12 @@ const express = require("express");
 const { z } = require("zod");
 const { requireApiUser } = require("../lib/auth");
 const {
+  add2ipKey,
   addIntelxKey,
   addNetlasKey,
   listProviderSettings,
+  parse2ipKeys,
+  remove2ipKey,
   removeIntelxKey,
   removeNetlasKey,
   updateProviderSetting,
@@ -111,6 +114,30 @@ router.delete("/providers/intelx/keys/:index", requireApiUser("ADMIN"), (req, re
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to remove IntelX key";
     res.status(400).json({ error: message });
+  }
+});
+
+router.post("/providers/2ip/keys", requireApiUser("ADMIN"), (req, res) => {
+  const parsed = intelxKeySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
+  try {
+    add2ipKey(parsed.data.key);
+    const provider = listProviderSettings().find((item) => item.provider === "2ip") || null;
+    res.json({ ok: true, provider });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to add 2ip key" });
+  }
+});
+
+router.delete("/providers/2ip/keys/:index", requireApiUser("ADMIN"), (req, res) => {
+  const index = Number.parseInt(String(req.params.index || ""), 10);
+  if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: "Invalid 2ip key index" }); return; }
+  try {
+    remove2ipKey(index);
+    const provider = listProviderSettings().find((item) => item.provider === "2ip") || null;
+    res.json({ ok: true, provider });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to remove 2ip key" });
   }
 });
 

@@ -5,6 +5,13 @@ const { getDbState } = require("../db");
 const { encryptToken, decryptToken } = require("./crypto");
 const { parseIntelxKeys } = require("./intelx");
 
+function parse2ipKeys(rawToken) {
+  return String(rawToken || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function parseNetlasKeys(rawToken) {
   return String(rawToken || "")
     .split(",")
@@ -141,7 +148,9 @@ function listProviderSettings() {
         ? parseIntelxKeys(token).length
         : row.provider === "netlas"
           ? parseNetlasKeys(token).length
-          : (token ? 1 : 0),
+          : row.provider === "2ip"
+            ? parse2ipKeys(token).length
+            : (token ? 1 : 0),
         helpLinks: providerMap.get(row.provider)?.helpLinks || null,
         updatedAt: row.updated_at,
       };
@@ -200,6 +209,35 @@ function removeIntelxKey(index) {
     SET token_encrypted = ?, updated_at = ?
     WHERE provider = 'intelx'
   `).run(keys.length ? encryptToken(keys.join(",")) : null, now);
+}
+
+function add2ipKey(rawKey) {
+  const nextKey = String(rawKey || "").trim();
+  if (!nextKey) throw new Error("2ip key is required");
+  ensureProviderSettings();
+  const { db } = getDbState();
+  const now = nowIso();
+  const row = db.prepare("SELECT token_encrypted FROM provider_settings WHERE provider = '2ip' LIMIT 1").get();
+  const currentToken = row?.token_encrypted ? decryptToken(row.token_encrypted).trim() : "";
+  const keys = parse2ipKeys(currentToken);
+  if (!keys.includes(nextKey)) keys.push(nextKey);
+  db.prepare("UPDATE provider_settings SET token_encrypted = ?, enabled = 1, updated_at = ? WHERE provider = '2ip'")
+    .run(encryptToken(keys.join(",")), now);
+}
+
+function remove2ipKey(index) {
+  ensureProviderSettings();
+  const keyIndex = Number.parseInt(String(index), 10);
+  if (!Number.isInteger(keyIndex) || keyIndex < 0) throw new Error("Invalid 2ip key index");
+  const { db } = getDbState();
+  const now = nowIso();
+  const row = db.prepare("SELECT token_encrypted FROM provider_settings WHERE provider = '2ip' LIMIT 1").get();
+  const currentToken = row?.token_encrypted ? decryptToken(row.token_encrypted).trim() : "";
+  const keys = parse2ipKeys(currentToken);
+  if (keyIndex >= keys.length) throw new Error("2ip key index is out of range");
+  keys.splice(keyIndex, 1);
+  db.prepare("UPDATE provider_settings SET token_encrypted = ?, updated_at = ? WHERE provider = '2ip'")
+    .run(keys.length ? encryptToken(keys.join(",")) : null, now);
 }
 
 function addNetlasKey(rawKey) {
@@ -365,11 +403,14 @@ function getProviderRuntimeSettings() {
 }
 
 module.exports = {
+  add2ipKey,
   addIntelxKey,
   addNetlasKey,
   ensureProviderSettings,
   listProviderSettings,
+  parse2ipKeys,
   parseNetlasKeys,
+  remove2ipKey,
   removeIntelxKey,
   removeNetlasKey,
   updateProviderSetting,

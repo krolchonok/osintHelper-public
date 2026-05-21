@@ -38,6 +38,12 @@ const providerCatalog = [
     helpLinks: [{ text: "Netlas API Key", url: "https://netlas.io/" }],
   },
   {
+    id: "2ip",
+    title: "2ip",
+    description: "2ip.me API: geo, provider, hosting lookup (supports multiple keys separated by commas).",
+    helpLinks: [{ text: "2ip API", url: "https://2ip.me/en/api/our-api" }],
+  },
+  {
     id: "reconeer",
     title: "Reconeer",
     description: "OSINT recon API provider.",

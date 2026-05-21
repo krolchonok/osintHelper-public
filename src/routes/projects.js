@@ -8,6 +8,7 @@ const { getDbState } = require("../db");
 const { createId, nowIso } = require("../lib/utils");
 const { SUPPORTED_PASSIVE_SOURCE_IDS } = require("../lib/passive-scan");
 const { fetchDomainWhois: fetchDomainWhoisLib } = require("../lib/whois");
+const { fetch2ipAll } = require("../lib/2ip");
 const { getProviderRuntimeSettings } = require("../lib/provider-settings");
 const { createIntelxClient } = require("../lib/intelx");
 const {
@@ -1627,6 +1628,24 @@ router.post("/:id/subdomains/delete-selected", requireApiUser(), (req, res) => {
   res.json({ ok: true, deleted: deletable.length });
 });
 
+router.post("/:id/subdomains/clear-unresolved", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const result = db.prepare(`
+    DELETE FROM subdomains
+    WHERE project_id = ? AND is_root = 0
+      AND id NOT IN (SELECT DISTINCT subdomain_id FROM dns_records WHERE project_id = ?)
+  `).run(id, id);
+
+  res.json({ ok: true, deleted: result.changes });
+});
+
 router.put("/:id/subdomains/:subdomainId", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id, subdomainId } = req.params;
@@ -1875,6 +1894,62 @@ router.get("/:id/whois", requireApiUser(), async (req, res) => {
     res.json({ whois, cached: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch WHOIS";
+    res.status(400).json({ error: message });
+  }
+});
+
+function getCached2ip(projectId) {
+  const { db } = getDbState();
+  const row = db.prepare("SELECT data_json, updated_at FROM project_2ip WHERE project_id = ? LIMIT 1").get(projectId);
+  if (!row) return null;
+  try {
+    const data = JSON.parse(row.data_json);
+    return { ...data, cachedAt: row.updated_at };
+  } catch { return null; }
+}
+
+function saveCached2ip(projectId, data) {
+  const { db } = getDbState();
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO project_2ip (project_id, data_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(project_id) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at
+  `).run(projectId, JSON.stringify(data || {}), now, now);
+}
+
+router.get("/:id/2ip-info", requireApiUser(), async (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const refresh = String(req.query?.refresh || "").trim() === "1";
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+
+  if (!refresh) {
+    const cached = getCached2ip(project.id);
+    if (cached) { res.json({ data: cached, cached: true }); return; }
+  }
+
+  const settings = new Map(getProviderRuntimeSettings().map((item) => [item.provider, item]));
+  const twoIp = settings.get("2ip");
+  const rawToken = twoIp?.token || "";
+
+  try {
+    const primaryDomain = ensureProjectHasPrimaryDomain(project, "load 2ip data");
+
+    // Берём первый A-резолв рутового домена из dns_records
+    const dnsRow = db.prepare(`
+      SELECT value FROM dns_records
+      WHERE project_id = ? AND record_type = 'A'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(id);
+    const ip = dnsRow?.value || null;
+
+    const data = await fetch2ipAll(primaryDomain, ip, rawToken);
+    saveCached2ip(project.id, data);
+    res.json({ data, cached: false });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to fetch 2ip data";
     res.status(400).json({ error: message });
   }
 });

@@ -2398,6 +2398,7 @@
                 <button class="btn btn-secondary" id="scan-root-hosts-provider-btn" type="button">Скан root-хостов</button>
                 <button class="btn btn-danger" id="delete-selected-btn" type="button">Удалить выбранные</button>
                 <button class="btn btn-secondary" id="export-selected-csv-btn" type="button">Экспорт выбранных</button>
+                <button class="btn btn-danger" id="clear-unresolved-btn" type="button">Очистить нерезолвленные</button>
                 <button class="btn btn-danger" id="subdomain-delete-all-btn" type="button">Удалить все</button>
               </div>
             </form>
@@ -2416,6 +2417,17 @@
                   <button class="btn btn-ghost" id="whois-export-csv-btn" type="button">Экспорт CSV</button>
                 </div>
                 <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
+              </div>
+              <div class="whois-block" style="margin-top: 20px;">
+                <div class="panel-header">
+                  <h3>2ip</h3>
+                  <p>Geo, провайдер, хостинг</p>
+                </div>
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-secondary" id="run-2ip-btn" type="button">Загрузить 2ip</button>
+                  <button class="btn btn-ghost" id="refresh-2ip-btn" type="button">Обновить</button>
+                </div>
+                <div id="2ip-result" class="hint" style="margin-top:8px;"></div>
               </div>
             </div>
             <div id="webarchive-panel" class="project-data-panel" hidden>
@@ -2543,6 +2555,9 @@
 
     const runPassiveAllBtn = document.getElementById("run-passive-all-btn");
     const runWhoisBtn = document.getElementById("run-whois-btn");
+    const run2ipBtn = document.getElementById("run-2ip-btn");
+    const refresh2ipBtn = document.getElementById("refresh-2ip-btn");
+    const twoIpResult = document.getElementById("2ip-result");
     const runWebarchiveBtn = document.getElementById("run-webarchive-btn");
     const runIntelxBtn = document.getElementById("run-intelx-btn");
     const openGoogleDorkBtn = document.getElementById("open-google-dork-btn");
@@ -2599,6 +2614,7 @@
     const scanRootHostsProviderBtn = document.getElementById("scan-root-hosts-provider-btn");
     const deleteSelectedBtn = document.getElementById("delete-selected-btn");
     const exportSelectedCsvBtn = document.getElementById("export-selected-csv-btn");
+    const clearUnresolvedBtn = document.getElementById("clear-unresolved-btn");
     const subdomainDeleteAllBtn = document.getElementById("subdomain-delete-all-btn");
     const subdomainsSearchInput = document.getElementById("subdomains-search-input");
     const subdomainActionMessageEl = document.getElementById("subdomain-action-message");
@@ -3404,6 +3420,7 @@
       selectedScanProviderSelect.disabled = disabled;
       deleteSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       exportSelectedCsvBtn.disabled = disabled || selectedSubdomainIds.size === 0;
+      clearUnresolvedBtn.disabled = disabled;
       if (subdomainsSearchInput) {
         subdomainsSearchInput.disabled = disabled;
       }
@@ -4011,6 +4028,59 @@
         {},
       );
     });
+
+    function render2ipResult(data) {
+      if (!data) { twoIpResult.textContent = "Нет данных"; return; }
+      const lines = [];
+      if (data.geo) {
+        const g = data.geo;
+        lines.push(`--- Geo ---`);
+        if (g.ip) lines.push(`IP: ${g.ip}`);
+        if (g.country_name_en) lines.push(`Страна: ${g.country_name_en}${g.country_code ? ` (${g.country_code})` : ""}`);
+        if (g.region) lines.push(`Регион: ${g.region}`);
+        if (g.city) lines.push(`Город: ${g.city}`);
+        if (g.latitude && g.longitude) lines.push(`Координаты: ${g.latitude}, ${g.longitude}`);
+      }
+      if (data.provider) {
+        const p = data.provider;
+        lines.push(`--- Провайдер ---`);
+        if (p.name_en) lines.push(`Провайдер: ${p.name_en}`);
+        if (p.site) lines.push(`Сайт: ${p.site}`);
+        if (p.as) lines.push(`AS: ${p.as}`);
+        if (p.ip_range_start && p.ip_range_end) lines.push(`Диапазон: ${p.ip_range_start} – ${p.ip_range_end}`);
+        if (p.route) lines.push(`Маршрут: ${p.route}`);
+        if (p.mask) lines.push(`Маска: ${p.mask}`);
+      }
+      if (data.hosting) {
+        const h = data.hosting;
+        lines.push(`--- Хостинг ---`);
+        if (h.name_en) lines.push(`Хостинг: ${h.name_en}`);
+        if (h.site) lines.push(`Сайт хостинга: ${h.site}`);
+      }
+      if (data.cachedAt) lines.push(`\nКэшировано: ${formatDate(data.cachedAt)}`);
+      twoIpResult.style.whiteSpace = "pre";
+      twoIpResult.style.fontFamily = "monospace";
+      twoIpResult.textContent = lines.join("\n") || "Данные не получены";
+    }
+
+    async function load2ip(refresh) {
+      run2ipBtn.disabled = true;
+      refresh2ipBtn.disabled = true;
+      twoIpResult.textContent = "Загрузка...";
+      try {
+        const qs = refresh ? "?refresh=1" : "";
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/2ip-info${qs}`);
+        render2ipResult(payload && payload.data);
+      } catch (error) {
+        twoIpResult.textContent = friendlyError(error, "Ошибка загрузки 2ip");
+      } finally {
+        run2ipBtn.disabled = false;
+        refresh2ipBtn.disabled = false;
+      }
+    }
+
+    run2ipBtn.addEventListener("click", () => void load2ip(false));
+    refresh2ipBtn.addEventListener("click", () => void load2ip(true));
 
     runWebarchiveBtn.addEventListener("click", () => {
       void queueAction(
@@ -4664,6 +4734,27 @@
       }
     });
 
+    clearUnresolvedBtn.addEventListener("click", async () => {
+      const confirmed = window.confirm("Удалить все субдомены без DNS-записей?");
+      if (!confirmed) return;
+
+      clearUnresolvedBtn.disabled = true;
+      setSubdomainMessage("", "");
+      try {
+        const result = await api(`/api/projects/${encodeURIComponent(projectId)}/subdomains/clear-unresolved`, {
+          method: "POST",
+        });
+        const deleted = Number(result && result.deleted) || 0;
+        setSubdomainMessage(`Удалено нерезолвленных: ${deleted}`, "success");
+        selectedSubdomainIds.clear();
+        await refreshSubdomains(true);
+      } catch (error) {
+        setSubdomainMessage(friendlyError(error, "Не удалось очистить нерезолвленные"), "error");
+      } finally {
+        clearUnresolvedBtn.disabled = false;
+      }
+    });
+
     exportSelectedCsvBtn.addEventListener("click", async () => {
       const selectedIds = Array.from(selectedSubdomainIds);
       if (!selectedIds.length) {
@@ -4820,7 +4911,7 @@
     const rows = providers
       .map(
         (provider) => {
-          const isMultiKey = provider.provider === "intelx" || provider.provider === "netlas";
+          const isMultiKey = provider.provider === "intelx" || provider.provider === "netlas" || provider.provider === "2ip";
           const tokenMeta = provider.hasToken
             ? (isMultiKey
               ? `Да${provider.tokenPartsCount > 1 ? ` (${provider.tokenPartsCount} ключей)` : ""}`
