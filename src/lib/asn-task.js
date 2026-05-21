@@ -72,14 +72,22 @@ async function executeAsnTask(projectId, onProgress) {
   await emit(5, "Загрузка IP-адресов");
 
   const rows = db.prepare(`
-    SELECT DISTINCT value AS ip
-    FROM dns_records
-    WHERE project_id = ?
-      AND record_type IN ('A', 'AAAA')
-    ORDER BY value
+    SELECT DISTINCT d.value AS ip, s.host
+    FROM dns_records d
+    JOIN subdomains s ON s.id = d.subdomain_id
+    WHERE d.project_id = ?
+      AND d.record_type IN ('A', 'AAAA')
+    ORDER BY d.value
   `).all(projectId);
 
-  const ips = rows.map((r) => r.ip).filter(Boolean);
+  // ip → Set of hostnames
+  const ipHostMap = new Map();
+  for (const row of rows) {
+    if (!ipHostMap.has(row.ip)) ipHostMap.set(row.ip, new Set());
+    if (row.host) ipHostMap.get(row.ip).add(row.host);
+  }
+
+  const ips = Array.from(new Set(rows.map((r) => r.ip).filter(Boolean)));
   if (!ips.length) {
     throw new Error("Нет зарезолвленных IP. Сначала запустите DNS-резолв.");
   }
@@ -116,11 +124,13 @@ async function executeAsnTask(projectId, onProgress) {
         rir: item.rir || "",
         ips: [],
         cidrs: new Set(),
+        hosts: new Set(),
       });
     }
     const entry = asnMap.get(item.asnNum);
     entry.ips.push(item.ip);
     if (item.cidr) entry.cidrs.add(item.cidr);
+    for (const host of (ipHostMap.get(item.ip) || [])) entry.hosts.add(host);
   }
 
   await emit(72, "Запрос названий ASN-организаций");
@@ -152,6 +162,7 @@ async function executeAsnTask(projectId, onProgress) {
       rir: entry.rir,
       ips: [...entry.ips].sort(),
       cidrs: [...entry.cidrs].sort(),
+      hosts: [...entry.hosts].sort(),
     }))
     .sort((a, b) => b.ips.length - a.ips.length);
 

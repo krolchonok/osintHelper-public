@@ -52,6 +52,8 @@ body.ui-theme-bright {
   --shadow-soft: 0 4px 12px rgba(26, 39, 51, 0.05);
   --shadow-mid: 0 12px 34px rgba(26, 39, 51, 0.08);
   --shadow-hard: 0 22px 56px rgba(26, 39, 51, 0.12);
+
+  color-scheme: light;
 }
 
 body.ui-theme-bright a {
@@ -89,6 +91,17 @@ body {
   font-family: "Manrope", "Segoe UI", sans-serif;
   font-size: 15px;
   line-height: 1.52;
+  background: var(--bg-0);
+  color-scheme: dark;
+}
+
+/* Full background in a fixed layer — never repaints on scroll */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(circle at 12% -8%, rgba(78, 205, 196, 0.22), transparent 42%),
     radial-gradient(circle at 88% 12%, rgba(244, 162, 89, 0.14), transparent 38%),
@@ -97,6 +110,10 @@ body {
 }
 
 body.ui-theme-bright {
+  background: var(--bg-0);
+}
+
+body.ui-theme-bright::before {
   background:
     radial-gradient(circle at 12% -8%, rgba(78, 205, 196, 0.1), transparent 42%),
     radial-gradient(circle at 88% 12%, rgba(244, 162, 89, 0.07), transparent 38%),
@@ -104,14 +121,12 @@ body.ui-theme-bright {
     linear-gradient(150deg, var(--bg-0) 0%, var(--bg-1) 58%, var(--bg-2) 100%);
 }
 
-body::before {
-  content: none;
-}
-
-body.ui-effects-enabled::before {
+/* Grid overlay — fixed, only with effects enabled */
+body.ui-effects-enabled::after {
   content: "";
   position: fixed;
   inset: 0;
+  z-index: -1;
   pointer-events: none;
   opacity: 0.45;
   background-image:
@@ -174,6 +189,7 @@ select:focus-visible {
   position: sticky;
   top: 0;
   z-index: 40;
+  will-change: transform;
   background:
     linear-gradient(140deg, rgba(9, 15, 20, 0.88), rgba(9, 14, 18, 0.76));
   border-bottom: 1px solid var(--line);
@@ -243,7 +259,6 @@ body.ui-theme-bright .brand {
   font-size: 0.9rem;
   cursor: pointer;
   transition:
-    transform var(--ease-fast),
     border-color var(--ease-fast),
     box-shadow var(--ease-fast),
     background-color var(--ease-fast);
@@ -251,7 +266,6 @@ body.ui-theme-bright .brand {
 
 .nav a:hover,
 .nav button:hover {
-  transform: translateY(-1px);
   border-color: var(--line-strong);
   box-shadow: 0 0 0 2px rgba(78, 205, 196, 0.16);
   background: rgba(26, 45, 58, 0.84);
@@ -327,22 +341,15 @@ body.ui-effects-disabled .nav .ui-mode-toggle {
   background:
     linear-gradient(155deg, var(--panel-0) 0%, var(--panel-1) 56%, var(--panel-2) 100%);
   padding: 20px;
-  box-shadow: var(--shadow-mid);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.028) inset,
+    var(--shadow-mid);
   overflow: hidden;
   animation: none;
 }
 
 body.ui-effects-enabled .panel {
   animation: panel-enter 180ms var(--ease-mid) both;
-}
-
-.panel::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.028) inset;
 }
 
 .hero {
@@ -464,26 +471,23 @@ textarea.text-input {
   line-height: 1.25;
   cursor: pointer;
   transition:
-    transform var(--ease-fast),
     border-color var(--ease-fast),
     box-shadow var(--ease-fast),
     background-color var(--ease-fast);
 }
 
 .btn:hover {
-  transform: translateY(-1px);
   border-color: var(--line-strong);
   box-shadow: 0 0 0 2px rgba(78, 205, 196, 0.14);
 }
 
 .btn:active {
-  transform: translateY(0);
+  opacity: 0.85;
 }
 
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  transform: none;
   box-shadow: none;
 }
 
@@ -673,11 +677,10 @@ body.ui-effects-enabled .app-popup {
   padding: 18px;
   animation: none;
   transition:
-    transform var(--ease-mid),
     border-color var(--ease-mid),
     box-shadow var(--ease-mid);
-  content-visibility: auto;
-  contain-intrinsic-size: 260px;
+  contain: layout style;
+  will-change: transform;
 }
 
 body.ui-effects-enabled .project-card {
@@ -686,7 +689,6 @@ body.ui-effects-enabled .project-card {
 }
 
 .project-card:hover {
-  transform: translateY(-2px);
   border-color: rgba(165, 207, 231, 0.58);
   box-shadow:
     0 0 0 1px rgba(140, 193, 220, 0.14) inset,
@@ -857,6 +859,7 @@ body.ui-theme-bright .table-wrap {
   position: sticky;
   top: 0;
   z-index: 1;
+  will-change: transform;
   color: #d3e4ef;
   background: rgba(16, 31, 41, 0.95);
   text-transform: uppercase;
@@ -1476,7 +1479,7 @@ body.ui-theme-bright .error-cell {
 
 .project-data-tabs {
   display: flex !important;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: stretch;
   margin-top: 10px !important;
   gap: 0 !important;
@@ -1488,6 +1491,7 @@ body.ui-theme-bright .error-cell {
 }
 
 .project-data-tabs .btn {
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   border: none;
@@ -1501,6 +1505,8 @@ body.ui-theme-bright .error-cell {
   margin-bottom: -1px;
   box-shadow: none;
   transform: none !important;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .project-data-tabs .btn:hover {
@@ -1530,8 +1536,6 @@ body.ui-theme-bright .error-cell {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  content-visibility: auto;
-  contain-intrinsic-size: 720px;
 }
 
 .project-data-toolbar-stack {
@@ -1663,6 +1667,44 @@ body.ui-theme-bright .error-cell {
   color: var(--text-faint);
   font-size: 0.84rem;
   line-height: 1.5;
+}
+
+.passwords-cell {
+  min-width: 180px;
+  max-width: 320px;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.cred-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-bottom: 3px;
+  font-size: 0.83rem;
+  line-height: 1.4;
+}
+
+.cred-type {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-family: monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid rgba(242, 95, 92, 0.45);
+  background: rgba(72, 22, 22, 0.55);
+  color: #ffb3b0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cred-plain .cred-value {
+  color: #f9c97a;
+}
+
+.cred-hash .cred-value {
+  color: var(--text-faint);
+  font-size: 0.78rem;
 }
 
 .intelx-hit-file {
@@ -2050,4 +2092,136 @@ body.ui-theme-bright #project-actions-panel::-webkit-scrollbar-thumb {
 body.ui-theme-bright .app-popup-close {
   background: #f7f9fa;
   border-color: rgba(29, 43, 54, 0.1);
+}
+
+/* ─── Bright theme: navigation & buttons ─────────────────────────── */
+
+body.ui-theme-bright .nav a,
+body.ui-theme-bright .nav button {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(29, 43, 54, 0.12);
+}
+
+body.ui-theme-bright .nav a:hover,
+body.ui-theme-bright .nav button:hover {
+  background: #ffffff;
+  border-color: rgba(29, 43, 54, 0.2);
+  box-shadow: 0 0 0 2px rgba(78, 205, 196, 0.18);
+}
+
+body.ui-theme-bright .btn {
+  background: #ffffff;
+  border-color: rgba(29, 43, 54, 0.14);
+  color: var(--text);
+}
+
+body.ui-theme-bright .btn:hover {
+  background: #f8fbfe;
+  border-color: rgba(29, 43, 54, 0.22);
+}
+
+body.ui-theme-bright .btn-primary {
+  background: linear-gradient(145deg, rgba(48, 184, 173, 0.18), rgba(78, 205, 196, 0.14));
+  border-color: rgba(48, 184, 173, 0.55);
+  color: #1a7a74;
+}
+
+body.ui-theme-bright .btn-primary:hover {
+  background: linear-gradient(145deg, rgba(48, 184, 173, 0.28), rgba(78, 205, 196, 0.22));
+  border-color: rgba(48, 184, 173, 0.75);
+  color: #126560;
+}
+
+body.ui-theme-bright .btn-secondary {
+  background: linear-gradient(145deg, rgba(244, 162, 89, 0.14), rgba(244, 162, 89, 0.08));
+  border-color: rgba(244, 162, 89, 0.5);
+}
+
+body.ui-theme-bright .btn-ghost {
+  background: rgba(240, 244, 248, 0.9);
+  border-color: rgba(29, 43, 54, 0.1);
+}
+
+body.ui-theme-bright .btn-danger {
+  background: linear-gradient(145deg, rgba(242, 95, 92, 0.1), rgba(242, 95, 92, 0.06));
+  border-color: rgba(242, 95, 92, 0.45);
+}
+
+/* ─── Bright theme: form fields & inputs ────────────────────────── */
+
+body.ui-theme-bright .field label {
+  color: var(--text-dim);
+}
+
+body.ui-theme-bright .text-input,
+body.ui-theme-bright #whois-info-field {
+  background: #ffffff !important;
+  border-color: rgba(29, 43, 54, 0.16) !important;
+  color: var(--text) !important;
+}
+
+body.ui-theme-bright .text-input::placeholder {
+  color: #9badb9;
+}
+
+body.ui-theme-bright .text-input:focus,
+body.ui-theme-bright #whois-info-field:focus {
+  background: #ffffff !important;
+  border-color: rgba(48, 184, 173, 0.7) !important;
+  box-shadow: 0 0 0 3px rgba(78, 205, 196, 0.15) !important;
+}
+
+/* ─── Bright theme: project cards ───────────────────────────────── */
+
+body.ui-theme-bright .project-card {
+  background: #ffffff;
+  border-color: rgba(29, 43, 54, 0.1);
+}
+
+body.ui-theme-bright .project-card:hover {
+  border-color: rgba(29, 43, 54, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(78, 205, 196, 0.12) inset,
+    0 12px 32px rgba(29, 43, 54, 0.1);
+}
+
+body.ui-theme-bright .project-title {
+  color: #0f1e29;
+}
+
+body.ui-theme-bright .project-insight {
+  color: #1a7a74;
+}
+
+/* ─── Bright theme: hero panel ──────────────────────────────────── */
+
+body.ui-theme-bright .hero {
+  background:
+    radial-gradient(circle at 85% 0%, rgba(244, 162, 89, 0.09), transparent 44%),
+    radial-gradient(circle at 16% 100%, rgba(78, 205, 196, 0.09), transparent 42%),
+    linear-gradient(155deg, #ffffff, #f4f8fc);
+  border-color: rgba(29, 43, 54, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.8) inset,
+    var(--shadow-soft);
+}
+
+/* ─── Bright theme: banners & notifications ─────────────────────── */
+
+body.ui-theme-bright .error-banner {
+  color: #8b1a1a;
+  border-color: rgba(242, 95, 92, 0.4);
+  background: rgba(255, 230, 230, 0.7);
+}
+
+body.ui-theme-bright .success-banner {
+  color: #1a5e40;
+  border-color: rgba(83, 216, 157, 0.45);
+  background: rgba(220, 255, 232, 0.7);
+}
+
+body.ui-theme-bright .app-popup {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(29, 43, 54, 0.12);
+  box-shadow: 0 14px 34px rgba(29, 43, 54, 0.12);
 }

@@ -544,6 +544,38 @@ function extractEmailsFromText(text) {
   return Array.from(new Set((matches || []).map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)));
 }
 
+function detectCredentialType(value) {
+  if (!value) return "plaintext";
+  if (/^\$2[abxy]\$\d{2}\$/.test(value)) return "bcrypt";
+  if (/^\$argon2/.test(value)) return "argon2";
+  if (/^\$1\$/.test(value)) return "md5crypt";
+  if (/^\$5\$/.test(value)) return "sha256crypt";
+  if (/^\$6\$/.test(value)) return "sha512crypt";
+  if (/^\{(SHA|MD5|SSHA)\}/i.test(value)) return "ldap";
+  if (/^[0-9a-f]{128}$/i.test(value)) return "sha512";
+  if (/^[0-9a-f]{64}$/i.test(value)) return "sha256";
+  if (/^[0-9a-f]{40}$/i.test(value)) return "sha1";
+  if (/^[0-9a-f]{32}$/i.test(value)) return "md5";
+  return "plaintext";
+}
+
+function parseCredentialFromLine(email, line) {
+  if (!email || !line) return null;
+  const lower = line.toLowerCase();
+  const emailIdx = lower.indexOf(email.toLowerCase());
+  if (emailIdx === -1) return null;
+  const afterEmail = line.slice(emailIdx + email.length);
+  const sep = afterEmail[0];
+  if (sep === ":" || sep === ";" || sep === "|" || sep === "\t") {
+    const raw = afterEmail.slice(1).trimEnd();
+    if (!raw || raw.length < 1 || raw.length > 256) return null;
+    // skip if looks like another email or a plain domain
+    if (/^[^@\s]+@/.test(raw)) return null;
+    return raw;
+  }
+  return null;
+}
+
 function normalizeEmailValue(rawEmail) {
   return String(rawEmail || "").trim().toLowerCase();
 }
@@ -583,6 +615,7 @@ function collectProjectEmails(projectId) {
         intelxTerms: new Set(),
         intelxSnippets: new Set(),
         intelxFiles: new Map(),
+        passwords: new Map(),
         webarchiveHosts: new Set(),
         webarchiveAuthors: new Set(),
         webarchiveEditors: new Set(),
@@ -648,6 +681,10 @@ function collectProjectEmails(projectId) {
           }
           if (line) {
             entry.intelxSnippets.add(line);
+          }
+          const cred = parseCredentialFromLine(email, line);
+          if (cred && entry.passwords.size < 20) {
+            entry.passwords.set(cred, detectCredentialType(cred));
           }
           const storageid = String(hit?.storageid || "").trim();
           const bucket = String(hit?.bucket || "").trim();
@@ -720,6 +757,7 @@ function collectProjectEmails(projectId) {
       intelxTerms: Array.from(item.intelxTerms).sort(),
       intelxSnippets: Array.from(item.intelxSnippets).slice(0, 5),
       intelxFiles: Array.from(item.intelxFiles.values()).slice(0, 10),
+      passwords: Array.from(item.passwords.entries()).slice(0, 10).map(([value, type]) => ({ value, type })),
       webarchiveHosts: Array.from(item.webarchiveHosts).sort(),
       webarchiveAuthors: Array.from(item.webarchiveAuthors).sort(),
       webarchiveEditors: Array.from(item.webarchiveEditors).sort(),
@@ -751,6 +789,7 @@ function collectProjectEmails(projectId) {
           intelxTerms: [],
           intelxSnippets: [],
           intelxFiles: [],
+          passwords: [],
           webarchiveHosts: [],
           webarchiveAuthors: [],
           webarchiveEditors: [],

@@ -1688,6 +1688,9 @@
       const cidrsHtml = entry.cidrs && entry.cidrs.length
         ? entry.cidrs.map((c) => `<span class="pill tiny mono">${escapeHtml(c)}</span>`).join(" ")
         : "—";
+      const hostsHtml = Array.isArray(entry.hosts) && entry.hosts.length
+        ? entry.hosts.map((h) => `<span class="pill tiny mono">${escapeHtml(h)}</span>`).join(" ")
+        : "—";
 
       return `
         <tr>
@@ -1697,6 +1700,7 @@
           <td>${escapeHtml(entry.rir || "—")}</td>
           <td>${cidrsHtml}</td>
           <td><div style="display:flex;flex-wrap:wrap;gap:4px">${ipsHtml}</div></td>
+          <td><div style="display:flex;flex-wrap:wrap;gap:4px">${hostsHtml}</div></td>
         </tr>
       `;
     }).join("");
@@ -1714,6 +1718,7 @@
               <th>RIR</th>
               <th>CIDR</th>
               <th>IP-адреса</th>
+              <th>Поддомены</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -1888,6 +1893,14 @@
         ];
         const foundDataHtml = foundDataParts.filter(Boolean).join("");
 
+        const passwordsHtml = Array.isArray(item.passwords) && item.passwords.length
+          ? item.passwords.map((p) => {
+              const typeClass = p.type === "plaintext" ? "cred-plain" : "cred-hash";
+              const label = p.type !== "plaintext" ? `<span class="cred-type">${escapeHtml(p.type)}</span>` : "";
+              return `<div class="cred-row ${typeClass}">${label}<span class="mono cred-value">${escapeHtml(p.value)}</span></div>`;
+            }).join("")
+          : "-";
+
         return `
           <tr>
             <td>
@@ -1901,6 +1914,7 @@
             <td class="mono">${escapeHtml(item.email || "-")}</td>
             <td>${escapeHtml(Array.isArray(item.sources) ? item.sources.join(", ") : "-")}</td>
             <td>${escapeHtml(Array.isArray(item.intelxTerms) && item.intelxTerms.length ? item.intelxTerms.join(", ") : "-")}</td>
+            <td class="passwords-cell">${passwordsHtml}</td>
             <td>${escapeHtml(Array.isArray(item.webarchiveHosts) && item.webarchiveHosts.length ? item.webarchiveHosts.join(", ") : "-")}</td>
             <td class="webarchive-metadata-cell">${foundDataHtml || "-"}</td>
             <td>${item.whois ? "Да" : "-"}</td>
@@ -1984,6 +1998,7 @@
                 <th>Email</th>
                 <th>Источники</th>
                 <th>Термы IntelX</th>
+                <th>Пароли / Хеши</th>
                 <th>Хосты WebArchive</th>
                 <th>Найденные данные</th>
                 <th>WHOIS</th>
@@ -2151,6 +2166,10 @@
                 <button class="btn btn-secondary" id="project-domain-submit" type="submit">Добавить домен</button>
               </div>
             </form>
+            <div class="row wrap project-domain-form-row">
+              <button class="btn btn-ghost" id="export-all-btn" type="button">Скачать всё</button>
+              <div id="export-all-message" style="font-size:0.85rem;align-self:center;"></div>
+            </div>
           </section>
         </div>
 
@@ -2164,7 +2183,7 @@
               <button class="btn btn-primary" id="tab-subdomains-btn" type="button">Поддомены</button>
               <button class="btn btn-ghost" id="tab-whois-btn" type="button">WHOIS</button>
               <button class="btn btn-ghost" id="tab-webarchive-btn" type="button">WebArchive</button>
-              <button class="btn btn-ghost" id="tab-dork-stats-btn" type="button">Дорки</button>
+              <button class="btn btn-ghost" id="tab-dork-stats-btn" type="button" hidden>Дорки</button>
               <button class="btn btn-ghost" id="tab-emails-btn" type="button">УЗ</button>
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
@@ -2249,6 +2268,10 @@
                   <button class="btn btn-ghost" id="open-google-subdomain-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Google: *.site</button>
                   <button class="btn btn-ghost" id="open-yandex-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Yandex: site</button>
                   <button class="btn btn-ghost" id="open-yandex-subdomain-dork-btn" type="button" ${primaryDomain ? "" : "disabled"}>Yandex: *.site</button>
+                  <div style="position:relative;display:inline-block;">
+                    <button class="btn btn-ghost" id="open-all-dorks-btn" type="button" ${primaryDomain ? "" : "disabled"}>Все дорки ↓</button>
+                    <div id="dork-links-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:200;min-width:340px;max-height:420px;overflow-y:auto;background:var(--panel-1);border:1px solid var(--line-strong);border-radius:12px;padding:8px 0;box-shadow:var(--shadow-hard);margin-top:4px;"></div>
+                  </div>
                   <button class="btn btn-secondary" id="dork-stats-load-btn" type="button">Обновить статистику дорков</button>
                   <div class="row row-no-margin" style="align-items: center; gap: 8px; margin: 0 8px;">
                     <label class="toggle" style="margin: 0; font-size: 14px;">
@@ -2339,10 +2362,13 @@
     const openGoogleSubdomainDorkBtn = document.getElementById("open-google-subdomain-dork-btn");
     const openYandexDorkBtn = document.getElementById("open-yandex-dork-btn");
     const openYandexSubdomainDorkBtn = document.getElementById("open-yandex-subdomain-dork-btn");
+    const openAllDorksBtn = document.getElementById("open-all-dorks-btn");
     const runResolveFastBtn = document.getElementById("run-resolve-fast-btn");
     const runResolveExtendedBtn = document.getElementById("run-resolve-extended-btn");
     const exportDomainIpCsvBtn = document.getElementById("export-domain-ip-csv-btn");
     const subdomainsExportTableCsvBtn = document.getElementById("subdomains-export-table-csv-btn");
+    const exportAllBtn = document.getElementById("export-all-btn");
+    const exportAllMessageEl = document.getElementById("export-all-message");
     const deleteProjectBtn = document.getElementById("delete-project-btn");
     const actionMessageEl = document.getElementById("project-action-message");
     const projectDomainForm = document.getElementById("project-domain-form");
@@ -2424,14 +2450,6 @@
 
     whoisInfoField.style.overflowY = "hidden";
     whoisInfoField.style.resize = "none";
-    whoisInfoField.addEventListener(
-      "wheel",
-      (event) => {
-        event.preventDefault();
-        window.scrollBy({ top: event.deltaY, left: 0, behavior: "auto" });
-      },
-      { passive: false },
-    );
 
     if (project.whois) {
       whoisInfoField.value = buildWhoisText(project.whois);
@@ -3084,7 +3102,7 @@
         const hasActiveRuns = runs.some((run) => ACTIVE_STATUSES.has(run.status));
         const shouldRefreshSubdomains = hasActiveRuns || hadActiveRuns;
         hadActiveRuns = hasActiveRuns;
-        if (shouldRefreshSubdomains) {
+        if (shouldRefreshSubdomains && !isPageScrolling) {
           await refreshSubdomains();
         }
       } catch {
@@ -3101,6 +3119,7 @@
       openGoogleSubdomainDorkBtn.disabled = disabled || !primaryDomain;
       openYandexDorkBtn.disabled = disabled || !primaryDomain;
       openYandexSubdomainDorkBtn.disabled = disabled || !primaryDomain;
+      openAllDorksBtn.disabled = disabled || !primaryDomain;
       dorkStatsLoadBtn.disabled = disabled || !primaryDomain;
       runResolveFastBtn.disabled = disabled;
       runResolveExtendedBtn.disabled = disabled;
@@ -3276,6 +3295,59 @@
       exportRowsCsv(projectCsvFileName("intelx"), headers, rows, "IntelX данных для экспорта нет", setIntelxMessage);
     }
 
+    function exportEmailsCsv() {
+      const rows = Array.isArray(emailData?.emails) ? emailData.emails : [];
+      if (!rows.length) return false;
+      const csvRows = [
+        ["email", "sources", "intelx_terms", "passwords", "password_types", "webarchive_hosts", "webarchive_authors", "webarchive_editors", "webarchive_titles", "webarchive_companies", "intelx_snippets", "whois"].join(";"),
+        ...rows.map((item) =>
+          [
+            item.email || "",
+            Array.isArray(item.sources) ? item.sources.join(",") : "",
+            Array.isArray(item.intelxTerms) ? item.intelxTerms.join(",") : "",
+            Array.isArray(item.passwords) ? item.passwords.map((p) => p.value).join(" | ") : "",
+            Array.isArray(item.passwords) ? item.passwords.map((p) => p.type).join(",") : "",
+            Array.isArray(item.webarchiveHosts) ? item.webarchiveHosts.join(",") : "",
+            Array.isArray(item.webarchiveAuthors) ? item.webarchiveAuthors.join(",") : "",
+            Array.isArray(item.webarchiveEditors) ? item.webarchiveEditors.join(",") : "",
+            Array.isArray(item.webarchiveTitles) ? item.webarchiveTitles.join(",") : "",
+            Array.isArray(item.webarchiveCompanies) ? item.webarchiveCompanies.join(",") : "",
+            Array.isArray(item.intelxSnippets) ? item.intelxSnippets.join(" | ") : "",
+            item.whois ? "1" : "0",
+          ]
+            .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+            .join(";"),
+        ),
+      ];
+      downloadTextFile(`${projectId}-accounts.csv`, `﻿${csvRows.join("\n")}\n`, "text/csv;charset=utf-8");
+      return true;
+    }
+
+    function exportAsnCsv() {
+      if (!asnData || !Array.isArray(asnData.asns) || !asnData.asns.length) return false;
+      const rows = [["ASN", "Организация", "Страна", "RIR", "CIDR", "IP-адреса", "Поддомены"]];
+      for (const entry of asnData.asns) {
+        rows.push([
+          entry.asn || "",
+          entry.org || "",
+          entry.country || "",
+          entry.rir || "",
+          (entry.cidrs || []).join("; "),
+          (entry.ips || []).join("; "),
+          (entry.hosts || []).join("; "),
+        ]);
+      }
+      const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = projectCsvFileName("asn");
+      a.click();
+      URL.revokeObjectURL(url);
+      return true;
+    }
+
     function exportWebArchiveCsv() {
       const headers = [
         "kind",
@@ -3333,6 +3405,60 @@
         });
       });
       exportRowsCsv(projectCsvFileName("webarchive"), headers, rows, "WebArchive данных для экспорта нет", setWebarchiveMessage);
+    }
+
+    async function exportAllData() {
+      exportAllBtn.disabled = true;
+      exportAllMessageEl.textContent = "Загрузка данных...";
+      exportAllMessageEl.style.color = "var(--text-faint)";
+
+      const missing = [];
+
+      // Load anything not yet in memory
+      await Promise.allSettled([
+        emailData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/emails`).then((p) => { emailData = p; }).catch(() => missing.push("УЗ")),
+        vtDeepData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/vt-deep`).then((p) => { if (p && !p.error) vtDeepData = p; }).catch(() => {}),
+        intelxData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/intelx-leaks`).then((p) => { if (p && !p.error) intelxData = p; }).catch(() => {}),
+        webarchiveData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/webarchive`).then((p) => { if (p && !p.error) webarchiveData = p; }).catch(() => {}),
+        dorkStatsData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/dork-stats`).then((p) => { if (p && !p.error) dorkStatsData = p; }).catch(() => {}),
+        asnData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/asn`).then((p) => { if (p && p.result) asnData = p.result; }).catch(() => {}),
+      ].filter(Boolean));
+
+      exportAllMessageEl.textContent = "Скачивание файлов...";
+
+      const tasks = [
+        // domain;ip через серверный endpoint — самый полный список поддоменов
+        async () => {
+          const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/export/domain-ip.csv`, { credentials: "same-origin" });
+          if (!resp.ok) return;
+          const blob = await resp.blob();
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = projectCsvFileName("domain-ip");
+          a.click();
+          URL.revokeObjectURL(a.href);
+        },
+        () => exportSubdomainsTableCsv(),
+        () => exportEmailsCsv(),
+        () => exportIntelxCsv(),
+        () => exportWebArchiveCsv(),
+        () => exportVtDeepCsv(),
+        () => exportDorkStatsCsv(),
+        () => exportAsnCsv(),
+        () => exportWhoisCsv(),
+      ];
+
+      let count = 0;
+      for (let i = 0; i < tasks.length; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, 350));
+        try { await tasks[i](); count++; } catch { /* skip */ }
+      }
+
+      exportAllBtn.disabled = false;
+      const note = missing.length ? ` (не загружены: ${missing.join(", ")})` : "";
+      exportAllMessageEl.textContent = `Готово${note}`;
+      exportAllMessageEl.style.color = missing.length ? "var(--color-warn, #f4a261)" : "var(--color-success, #53d89d)";
+      setTimeout(() => { exportAllMessageEl.textContent = ""; }, 4000);
     }
 
     runsTableRoot.addEventListener("click", async (event) => {
@@ -3658,6 +3784,7 @@
     webarchiveExportCsvBtn.addEventListener("click", exportWebArchiveCsv);
     dorkStatsExportCsvBtn.addEventListener("click", exportDorkStatsCsv);
     intelxExportCsvBtn.addEventListener("click", exportIntelxCsv);
+    exportAllBtn.addEventListener("click", () => { void exportAllData(); });
 
     function openDork(engine, query) {
       if (!primaryDomain || !query) {
@@ -3685,6 +3812,71 @@
 
     openYandexSubdomainDorkBtn.addEventListener("click", () => {
       openDork("yandex", `site:*.${primaryDomain}`);
+    });
+
+    const dorkLinksDropdown = document.getElementById("dork-links-dropdown");
+
+    function buildDorkLinksDropdown() {
+      if (!primaryDomain) return [];
+      if (dorkStatsData && Array.isArray(dorkStatsData.rows) && dorkStatsData.rows.length > 0) {
+        return dorkStatsData.rows
+          .filter((r) => r.url && r.engine !== "duckduckgo")
+          .map((r) => ({ label: r.label || r.query, url: r.url, category: r.category || "", risk: r.risk || "" }));
+      }
+      return [
+        { label: "Google: site", url: `https://www.google.com/search?q=${encodeURIComponent(`site:${primaryDomain}`)}&hl=ru&num=100&pws=0&filter=0`, category: "baseline" },
+        { label: "Google: *.site", url: `https://www.google.com/search?q=${encodeURIComponent(`site:*.${primaryDomain}`)}&hl=ru&num=100&pws=0&filter=0`, category: "baseline" },
+        { label: "Yandex: site", url: `https://yandex.ru/search/?text=${encodeURIComponent(`site:${primaryDomain}`)}`, category: "baseline" },
+        { label: "Yandex: *.site", url: `https://yandex.ru/search/?text=${encodeURIComponent(`site:*.${primaryDomain}`)}`, category: "baseline" },
+      ];
+    }
+
+    function renderDorkLinksDropdown() {
+      const items = buildDorkLinksDropdown();
+      if (!items.length) {
+        dorkLinksDropdown.innerHTML = `<div style="padding:10px 14px;font-size:0.85rem;color:var(--text-faint);">Нет дорков</div>`;
+        return;
+      }
+      const riskColor = { high: "#f25f5c", medium: "#f4a259", low: "var(--text-faint)", info: "var(--text-faint)" };
+      let lastCategory = null;
+      const parts = [];
+      for (const item of items) {
+        if (item.category && item.category !== lastCategory) {
+          parts.push(`<div style="padding:4px 14px 2px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);border-top:${lastCategory !== null ? "1px solid var(--line)" : "none"};margin-top:${lastCategory !== null ? "4px" : "0"};">${escapeHtml(item.category)}</div>`);
+          lastCategory = item.category;
+        }
+        const riskHtml = item.risk && item.risk !== "info"
+          ? `<span style="font-size:0.7rem;color:${riskColor[item.risk] || "var(--text-faint)"};margin-left:6px;">${escapeHtml(item.risk)}</span>`
+          : "";
+        parts.push(`<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;padding:6px 14px;font-size:0.83rem;color:var(--text);text-decoration:none;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" onmouseover="this.style.background='rgba(78,205,196,0.07)'" onmouseout="this.style.background=''">${escapeHtml(item.label)}${riskHtml}</a>`);
+      }
+      dorkLinksDropdown.innerHTML = parts.join("");
+    }
+
+    let dorkDropdownOpen = false;
+
+    function closeDorkDropdown() {
+      if (dorkDropdownOpen) {
+        dorkDropdownOpen = false;
+        dorkLinksDropdown.style.display = "none";
+      }
+    }
+
+    openAllDorksBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      dorkDropdownOpen = !dorkDropdownOpen;
+      if (dorkDropdownOpen) {
+        renderDorkLinksDropdown();
+        dorkLinksDropdown.style.display = "block";
+      } else {
+        dorkLinksDropdown.style.display = "none";
+      }
+    });
+
+    document.addEventListener("click", closeDorkDropdown);
+
+    dorkLinksDropdown.addEventListener("click", (e) => {
+      e.stopPropagation();
     });
 
     if (subdomainsSearchInput) {
@@ -3775,26 +3967,7 @@
     });
 
     asnExportCsvBtn.addEventListener("click", () => {
-      if (!asnData || !Array.isArray(asnData.asns)) return;
-      const rows = [["ASN", "Организация", "Страна", "RIR", "CIDR", "IP-адреса"]];
-      for (const entry of asnData.asns) {
-        rows.push([
-          entry.asn || "",
-          entry.org || "",
-          entry.country || "",
-          entry.rir || "",
-          (entry.cidrs || []).join("; "),
-          (entry.ips || []).join("; "),
-        ]);
-      }
-      const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "asn.csv";
-      a.click();
-      URL.revokeObjectURL(url);
+      exportAsnCsv();
     });
 
     vtDeepLoadBtn.addEventListener("click", () => {
@@ -3943,38 +4116,11 @@
     });
 
     emailsExportCsvBtn.addEventListener("click", () => {
-      const rows = Array.isArray(emailData?.emails) ? emailData.emails : [];
-      if (!rows.length) {
+      if (exportEmailsCsv()) {
+        setEmailsMessage("УЗ экспортированы в CSV", "success");
+      } else {
         setEmailsMessage("Нет данных УЗ для экспорта", "error");
-        return;
       }
-
-      const csvRows = [
-        ["email", "sources", "intelx_terms", "webarchive_hosts", "webarchive_authors", "webarchive_editors", "webarchive_titles", "webarchive_companies", "intelx_snippets", "whois"].join(";"),
-        ...rows.map((item) =>
-          [
-            item.email || "",
-            Array.isArray(item.sources) ? item.sources.join(",") : "",
-            Array.isArray(item.intelxTerms) ? item.intelxTerms.join(",") : "",
-            Array.isArray(item.webarchiveHosts) ? item.webarchiveHosts.join(",") : "",
-            Array.isArray(item.webarchiveAuthors) ? item.webarchiveAuthors.join(",") : "",
-            Array.isArray(item.webarchiveEditors) ? item.webarchiveEditors.join(",") : "",
-            Array.isArray(item.webarchiveTitles) ? item.webarchiveTitles.join(",") : "",
-            Array.isArray(item.webarchiveCompanies) ? item.webarchiveCompanies.join(",") : "",
-            Array.isArray(item.intelxSnippets) ? item.intelxSnippets.join(" | ") : "",
-            item.whois ? "1" : "0",
-          ]
-            .map((value) => `"${String(value).replace(/"/g, '""')}"`)
-            .join(";"),
-        ),
-      ];
-
-      downloadTextFile(
-        `${projectId}-accounts.csv`,
-        `\uFEFF${csvRows.join("\n")}\n`,
-        "text/csv;charset=utf-8",
-      );
-      setEmailsMessage("УЗ экспортированы в CSV", "success");
     });
 
     intelxLoadBtn.addEventListener("click", () => {
@@ -4327,20 +4473,42 @@
     runsLogRoot.addEventListener("wheel", lockRunsRenderDuringInteraction, { passive: true });
     runsLogRoot.addEventListener("touchmove", lockRunsRenderDuringInteraction, { passive: true });
 
+    // Pause heavy DOM updates while user is scrolling the page
+    let isPageScrolling = false;
+    let pageScrollEndTimer = null;
+    let pendingRunsRefresh = false;
+
+    function onPageScroll() {
+      isPageScrolling = true;
+      clearTimeout(pageScrollEndTimer);
+      pageScrollEndTimer = setTimeout(() => {
+        isPageScrolling = false;
+        if (pendingRunsRefresh && !disposed) {
+          pendingRunsRefresh = false;
+          void refreshRuns();
+        }
+      }, 200);
+    }
+
+    window.addEventListener("scroll", onPageScroll, { passive: true });
+    document.addEventListener("touchmove", onPageScroll, { passive: true });
+
     let runsPollTimer = null;
 
     function scheduleRunsPoll(delayMs) {
       runsPollTimer = setTimeout(async () => {
-        if (disposed) {
-          return;
-        }
+        if (disposed) return;
 
         if (!document.hidden) {
-          await refreshRuns();
+          if (isPageScrolling) {
+            pendingRunsRefresh = true;
+          } else {
+            await refreshRuns();
+          }
         }
 
         const hasActiveRuns = runs.some((run) => ACTIVE_STATUSES.has(run.status));
-        scheduleRunsPoll(hasActiveRuns ? 3000 : 10000);
+        scheduleRunsPoll(hasActiveRuns ? 3000 : 12000);
       }, delayMs);
     }
 
@@ -4363,6 +4531,12 @@
       if (runsPollTimer) {
         clearTimeout(runsPollTimer);
       }
+      if (pageScrollEndTimer) {
+        clearTimeout(pageScrollEndTimer);
+      }
+      window.removeEventListener("scroll", onPageScroll);
+      document.removeEventListener("touchmove", onPageScroll);
+      document.removeEventListener("click", closeDorkDropdown);
     });
   }
 

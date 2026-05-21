@@ -7,7 +7,7 @@ const { getProviderRuntimeSettings } = require("./provider-settings");
 const { clampProgress, createId, nowIso } = require("./utils");
 
 const WEB_SOURCE_TIMEOUT_MS = 15000;
-const RAPIDDNS_MAX_PAGES = 3;
+const CRTSH_TIMEOUT_MS = 35000;
 const URLSCAN_MAX_PAGES = 5;
 const URLSCAN_PAGE_SIZE = 100;
 const VIRUSTOTAL_MAX_PAGES = 8;
@@ -23,14 +23,11 @@ const DORK_HEADERS = {
 };
 
 const SUPPORTED_PASSIVE_SOURCE_IDS = [
-  "anubis",
   "commoncrawl",
   "crtsh",
   "hackertarget",
-  "rapiddns",
   "waybackarchive",
   "hudsonrock",
-  "threatcrowd",
   "bevigil",
   "bufferover",
   "fullhunt",
@@ -396,6 +393,7 @@ async function requestJson(url, options = {}) {
 async function fetchCrtsh(domain) {
   const text = await requestText(`https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`, {
     source: "crtsh",
+    timeoutMs: CRTSH_TIMEOUT_MS,
   });
   const data = JSON.parse(text);
   const hosts = new Set();
@@ -413,41 +411,6 @@ async function fetchCrtsh(domain) {
   }
 
   return Array.from(hosts).map((host) => ({ host, sources: ["crtsh"] }));
-}
-
-async function fetchThreatCrowd(domain) {
-  const endpoints = [
-    `https://www.threatcrowd.org/searchApi/v2/domain/report/?domain=${encodeURIComponent(domain)}`,
-    `http://ci-www.threatcrowd.org/searchApi/v2/domain/report/?domain=${encodeURIComponent(domain)}`,
-  ];
-
-  for (const endpoint of endpoints) {
-    try {
-      const text = await requestText(endpoint, { source: "threatcrowd" });
-      const data = JSON.parse(text);
-      const items = Array.isArray(data?.subdomains) ? data.subdomains : [];
-      return items
-        .map((item) => normalizeHost(item))
-        .filter((item) => item && inScope(item, domain))
-        .map((item) => ({ host: item, sources: ["threatcrowd"] }));
-    } catch {
-      // try next endpoint
-    }
-  }
-
-  return [];
-}
-
-async function fetchAnubis(domain) {
-  const data = await requestJson(`https://jonlu.ca/anubis/subdomains/${encodeURIComponent(domain)}`, {
-    source: "anubis",
-  });
-
-  const items = Array.isArray(data) ? data : [];
-  return items
-    .map((item) => normalizeHost(item))
-    .filter((item) => item && inScope(item, domain))
-    .map((item) => ({ host: item, sources: ["anubis"] }));
 }
 
 async function fetchHudsonRock(domain) {
@@ -593,26 +556,9 @@ async function fetchHackerTarget(domain) {
   return Array.from(hosts).map((host) => ({ host, sources: ["hackertarget"] }));
 }
 
-async function fetchRapidDns(domain) {
-  const found = new Set();
-
-  for (let page = 1; page <= RAPIDDNS_MAX_PAGES; page += 1) {
-    const text = await requestText(
-      `https://rapiddns.io/subdomain/${encodeURIComponent(domain)}?page=${page}&full=1`,
-      { source: "rapiddns" },
-    );
-    const hosts = extractHostsFromText(text, domain);
-    for (const host of hosts) {
-      found.add(host);
-    }
-  }
-
-  return Array.from(found).map((host) => ({ host, sources: ["rapiddns"] }));
-}
-
 async function fetchWayback(domain) {
   const text = await requestText(
-    `http://web.archive.org/cdx/search/cdx?url=*.${encodeURIComponent(domain)}/*&output=txt&fl=original&collapse=urlkey`,
+    `https://web.archive.org/cdx/search/cdx?url=*.${encodeURIComponent(domain)}&output=txt&fl=original&collapse=urlkey&limit=5000`,
     { source: "waybackarchive" },
   );
 
@@ -1074,14 +1020,11 @@ async function mapWithConcurrency(items, concurrency, mapper) {
 
 async function runWebPassiveScan(domain, onProgress, scanScope) {
   const baseSources = [
-    { name: "anubis", category: "core", fetcher: fetchAnubis },
     { name: "commoncrawl", category: "core", fetcher: fetchCommonCrawl },
     { name: "crtsh", category: "core", fetcher: fetchCrtsh },
     { name: "hackertarget", category: "core", fetcher: fetchHackerTarget },
-    { name: "rapiddns", category: "core", fetcher: fetchRapidDns },
     { name: "waybackarchive", category: "core", fetcher: fetchWayback },
     { name: "hudsonrock", category: "core", fetcher: fetchHudsonRock },
-    { name: "threatcrowd", category: "core", fetcher: fetchThreatCrowd },
   ];
   const sources = [...baseSources];
   const providerSettings = new Map(

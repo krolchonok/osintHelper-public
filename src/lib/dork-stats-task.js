@@ -13,7 +13,7 @@ const DORK_TIMEOUT_MS = 18000;
 const DORK_HTML_DELAY_MS = {
   google: 4500,
   yandex: 3000,
-  duckduckgo: 2000,
+  duckduckgo: 4000,
 };
 const DORK_HEADERS = {
   "User-Agent":
@@ -206,18 +206,11 @@ function buildDorkQueries(domain) {
       query: `site:${domain}`,
       url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`site:${domain}`)}`,
     },
-    {
-      engine: "duckduckgo",
-      label: "DuckDuckGo: *.site",
-      category: "baseline",
-      risk: "info",
-      query: `site:*.${domain}`,
-      url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`site:*.${domain}`)}`,
-    },
   ];
 
   const sensitiveQueries = SENSITIVE_DORKS.flatMap((probe) => {
     const query = `site:${domain} ${probe.expression}`;
+    // DDG blocks all queries with extra operators — only baseline site: works
     return [
       {
         engine: "google",
@@ -234,14 +227,6 @@ function buildDorkQueries(domain) {
         risk: probe.risk,
         query,
         url: `https://yandex.ru/search/?text=${encodeURIComponent(query)}`,
-      },
-      {
-        engine: "duckduckgo",
-        label: `DuckDuckGo: ${probe.label}`,
-        category: probe.category,
-        risk: probe.risk,
-        query,
-        url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
       },
     ];
   });
@@ -348,18 +333,76 @@ function countVisibleResults(html, engine) {
     if (text.includes("no-results__container") || text.includes("result--no-result") || text.includes("No results found")) {
       return 0;
     }
-    const patterns = [
-      /class="[^"]*\bresult__snippet\b[^"]*"/gi,
-      /class="[^"]*\bresult__title\b[^"]*"/gi,
-      /class="[^"]*\bresult__url\b[^"]*"/gi,
-      /class="[^"]*\bresult\b[^"]*"/gi,
-    ];
-    return Math.max(...patterns.map((pattern) => (text.match(pattern) || []).length), 0);
+    return (text.match(/class="result__title"/gi) || []).length;
   }
   return 0;
 }
 
-function detectChallenge(engine, html) {
+function extractDdgNextPageParams(html) {
+  const vqdMatch = html.match(/name="vqd"\s+value="([^"]+)"/);
+  const sMatch = html.match(/name="s"\s+value="(\d+)"/);
+  const dcMatch = html.match(/name="dc"\s+value="(\d+)"/);
+  const nextParamsMatch = html.match(/name="nextParams"\s+value="([^"]*)"/);
+  const klMatch = html.match(/name="kl"\s+value="([^"]*)"/);
+  if (!vqdMatch || !sMatch) return null;
+  return {
+    vqd: vqdMatch[1],
+    s: sMatch[1],
+    dc: dcMatch ? dcMatch[1] : String(Number(sMatch[1]) + 1),
+    nextParams: nextParamsMatch ? nextParamsMatch[1] : "",
+    kl: klMatch ? klMatch[1] : "wt-wt",
+  };
+}
+
+async function fetchDdgAllPages(query, firstHtml, headers, controller) {
+  const DDG_MAX_PAGES = 3;
+  let total = countVisibleResults(firstHtml, "duckduckgo");
+  let html = firstHtml;
+
+  for (let page = 1; page < DDG_MAX_PAGES; page++) {
+    const params = extractDdgNextPageParams(html);
+    if (!params) break;
+    // No "Next" button = last page
+    if (!html.includes('value="Next"') && !html.includes("class='btn btn--alt'")) break;
+
+    await sleep(1500);
+    const body = new URLSearchParams({
+      q: query,
+      s: params.s,
+      dc: params.dc,
+      v: "l",
+      o: "json",
+      api: "d.js",
+      vqd: params.vqd,
+      kl: params.kl,
+      nextParams: params.nextParams,
+    });
+
+    let pageRes;
+    try {
+      pageRes = await fetch("https://html.duckduckgo.com/html/", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+        signal: controller.signal,
+      });
+    } catch {
+      break;
+    }
+
+    if (!pageRes.ok || pageRes.status === 202) break;
+    html = await pageRes.text();
+    if (detectChallenge("duckduckgo", html, pageRes.status)) break;
+
+    const pageCount = countVisibleResults(html, "duckduckgo");
+    if (pageCount === 0) break;
+    total += pageCount;
+  }
+
+  return total;
+}
+
+function detectChallenge(engine, html, status) {
   const body = String(html || "").toLowerCase();
   if (!body) {
     return false;
@@ -376,6 +419,10 @@ function detectChallenge(engine, html) {
     return body.includes("smart-captcha") || body.includes("checkcaptchafast");
   }
   if (engine === "duckduckgo") {
+    // HTTP 202 = DDG anomaly soft-block (returns homepage instead of results)
+    if (status === 202) return true;
+    // Homepage canonical = redirected to main page, no results
+    if (body.includes('rel="canonical" href="https://duckduckgo.com/"')) return true;
     return (
       body.includes("ddg-captcha") ||
       body.includes("ddg-laptcha") ||
@@ -549,7 +596,7 @@ async function fetchDorkStat(item, options = {}) {
     }
     const initialCookies = extractCookies(response);
 
-    if (detectChallenge(item.engine, html)) {
+    if (detectChallenge(item.engine, html, response.status)) {
       return { ...item, status: "blocked", totalResults: null, visibleResults: 0, error: "anti-bot challenge", checkedAt, html, initialCookies };
     }
     if (item.engine === "google" && detectGoogleJsOnly(html)) {
@@ -571,7 +618,15 @@ async function fetchDorkStat(item, options = {}) {
     }
 
     let totalResults = parseResultCount(html);
-    const visibleResults = countVisibleResults(html, item.engine);
+    let visibleResults;
+
+    if (item.engine === "duckduckgo") {
+      visibleResults = await fetchDdgAllPages(item.query, html, headers, controller);
+      if (totalResults === null) totalResults = null; // DDG never exposes total count
+    } else {
+      visibleResults = countVisibleResults(html, item.engine);
+    }
+
     if (visibleResults === 0 && totalResults === null) {
       totalResults = 0;
     }
@@ -653,7 +708,7 @@ async function executeDorkStatsTask(projectId, onProgress, runId) {
     await emit(10 + Math.round((index / queries.length) * 75), `Checking ${item.label}`, index, queries.length);
     let row = await fetchDorkStat(item, { googleCse, yandexSearchApi });
 
-    if (runId && row.status === "blocked" && (row.error === "anti-bot challenge" || (row.error && row.error.includes("JS-only page")))) {
+    if (runId && row.status === "blocked" && item.engine !== "duckduckgo" && (row.error === "anti-bot challenge" || (row.error && row.error.includes("JS-only page")))) {
       const engine = item.engine;
       const sessionId = createId();
       const now = nowIso();
