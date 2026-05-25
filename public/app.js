@@ -1332,6 +1332,14 @@
                     <div class="subdomain-actions">
                       <button
                         class="btn btn-ghost btn-icon"
+                        data-action="netlas-dns-info"
+                        data-host="${escapeHtml(subdomain.host)}"
+                        aria-label="DNS инфо из Netlas"
+                        title="DNS инфо (Netlas)"
+                        type="button"
+                      >${ICON_ACTIVITY}</button>
+                      <button
+                        class="btn btn-ghost btn-icon"
                         data-action="edit-subdomain"
                         data-subdomain-id="${escapeHtml(subdomain.id)}"
                         data-host="${escapeHtml(subdomain.host)}"
@@ -3674,6 +3682,53 @@
         
         projectDomainInput.value = domain;
         projectDomainSubmit.click();
+      }
+    });
+
+    subdomainsTableRoot.addEventListener("click", async (e) => {
+      const btn = e.target.closest('button[data-action="netlas-dns-info"]');
+      if (!btn) return;
+
+      const host = btn.dataset.host;
+      if (!host) return;
+
+      const row = btn.closest("tr");
+      let infoRow = row.nextElementSibling;
+      if (infoRow && infoRow.classList.contains("netlas-dns-info-row")) {
+        infoRow.remove();
+        return;
+      }
+
+      btn.disabled = true;
+      try {
+        const res = await api(`/api/netlas/domain-dns-records?domain=${encodeURIComponent(host)}`);
+        const records = res.records || {};
+        
+        let html = "";
+        const types = ["MX", "TXT", "NS", "A"];
+        types.forEach(type => {
+          if (records[type] && records[type].length > 0) {
+            html += `<div style="margin-bottom:4px"><strong>${type}:</strong> <span class="mono" style="font-size:12px">${records[type].join(", ")}</span></div>`;
+          }
+        });
+
+        if (!html) html = '<div class="hint">Записей не найдено.</div>';
+
+        const newRow = document.createElement("tr");
+        newRow.className = "netlas-dns-info-row";
+        newRow.innerHTML = `
+          <td colspan="5" style="background: rgba(0,0,0,0.1); padding: 12px;">
+            <div class="stack-xs">
+              <div class="hint" style="margin-bottom:8px">Данные Netlas Discovery для ${escapeHtml(host)}:</div>
+              ${html}
+            </div>
+          </td>
+        `;
+        row.after(newRow);
+      } catch (err) {
+        alert(friendlyError(err, "Ошибка получения DNS из Netlas"));
+      } finally {
+        btn.disabled = false;
       }
     });
 

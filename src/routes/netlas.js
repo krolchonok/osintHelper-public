@@ -76,4 +76,39 @@ router.get("/org-domains", requireApiUser(), async (req, res) => {
   }
 });
 
+router.get("/domain-dns-records", requireApiUser(), async (req, res) => {
+  const domain = req.query.domain;
+  if (!domain) {
+    return res.status(400).json({ error: "Missing 'domain' parameter" });
+  }
+
+  try {
+    // 32: TXT records for domain
+    // 31: Mailservers for domain (MX)
+    // 30: NS servers for domain
+    // 29: A records for domain
+    const fieldIds = [32, 31, 30, 29];
+    const results = {};
+
+    for (const fieldId of fieldIds) {
+      const data = await netlasDiscoveryProxy("domain", domain, fieldId);
+      const values = (data.aggregations || [])
+        .map(item => item.node_value);
+      
+      let key = "unknown";
+      if (fieldId === 32) key = "TXT";
+      else if (fieldId === 31) key = "MX";
+      else if (fieldId === 30) key = "NS";
+      else if (fieldId === 29) key = "A";
+
+      results[key] = values;
+    }
+
+    res.json({ domain, records: results });
+  } catch (err) {
+    console.error("[netlas-proxy] dns error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { netlasRouter: router };
