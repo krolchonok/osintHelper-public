@@ -400,6 +400,7 @@ async function fetchCrtsh(domain) {
   const text = await requestText(`https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`, {
     source: "crtsh",
     timeoutMs: CRTSH_TIMEOUT_MS,
+    headers: DORK_HEADERS,
   });
   const data = JSON.parse(text);
   const hosts = new Set();
