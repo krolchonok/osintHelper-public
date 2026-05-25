@@ -2971,6 +2971,18 @@ router.put("/:id/labor-scope", requireApiUser(), (req, res) => {
   res.json({ ok: true, scope: validScope });
 });
 
+router.post("/:id/netlas-dns-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const runId = startRun(id, "PASSIVE_SCAN", "NETLAS_DNS");
+  res.status(202).json({ id: runId });
+});
+
 router.post("/:id/whois-task", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;

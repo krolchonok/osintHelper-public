@@ -2718,6 +2718,7 @@
                 <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
                 <button class="btn btn-primary" id="subdomain-create-btn" type="submit">Добавить поддомен</button>
                 <button class="btn btn-secondary" id="resolve-selected-btn" type="button">Резолв выбранных (быстрый)</button>
+                <button class="btn btn-secondary" id="run-netlas-dns-btn" type="button">Netlas DNS (массово)</button>
                 <select id="selected-scan-provider" class="text-input mono" aria-label="Провайдер для скана выбранных">
                   ${selectedScanProviderOptions}
                 </select>
@@ -2951,6 +2952,7 @@
     const asnActionMessageEl = document.getElementById("asn-action-message");
     const asnTableRoot = document.getElementById("asn-table-root");
     const runAsnBtn = document.getElementById("run-asn-btn");
+    const runNetlasDnsBtn = document.getElementById("run-netlas-dns-btn");
     const asnDeleteSelectedBtn = document.getElementById("asn-delete-selected-btn");
     const asnClearBtn = document.getElementById("asn-clear-btn");
     const asnExportCsvBtn = document.getElementById("asn-export-csv-btn");
@@ -4933,6 +4935,20 @@
         asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось запустить ASN-лукап"));
       } finally {
         runAsnBtn.disabled = false;
+      }
+    });
+
+    runNetlasDnsBtn.addEventListener("click", async () => {
+      runNetlasDnsBtn.disabled = true;
+      try {
+        const res = await api(`/api/projects/${encodeURIComponent(projectId)}/netlas-dns-task`, { method: "POST", body: {} });
+        selectedRunId = res.id;
+        showPopup("Массовый сбор DNS-записей через Netlas запущен", "success");
+        await refreshRuns();
+      } catch (error) {
+        alert(friendlyError(error, "Не удалось запустить массовый DNS-сбор"));
+      } finally {
+        runNetlasDnsBtn.disabled = false;
       }
     });
 
