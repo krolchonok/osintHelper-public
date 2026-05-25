@@ -2405,8 +2405,10 @@
             </form>
             <div class="row wrap project-domain-form-row">
               <button class="btn btn-ghost" id="export-all-btn" type="button">Скачать всё</button>
+              <button class="btn btn-danger" id="delete-project-btn" type="button">Удалить проект</button>
               <div id="export-all-message" style="font-size:0.85rem;align-self:center;"></div>
             </div>
+            <div id="project-action-message"></div>
           </section>
         </div>
 
@@ -2457,7 +2459,6 @@
               </div>
             </form>
             <div id="subdomain-action-message"></div>
-            <div id="project-action-message"></div>
             <div id="subdomains-table-root"></div>
             </div>
             <div id="whois-panel" class="project-data-panel" hidden>
@@ -2586,11 +2587,6 @@
             </div>
             <div id="labor-panel" class="project-data-panel" hidden>
               <div id="labor-panel-root"></div>
-            </div>
-            <div class="project-data-panel">
-              <div class="row wrap project-panel-toolbar">
-                <button class="btn btn-danger" id="delete-project-btn" type="button">Удалить проект</button>
-              </div>
             </div>
           </section>
 
