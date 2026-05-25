@@ -77,7 +77,7 @@ function initSchema(db) {
     CREATE TABLE IF NOT EXISTS scan_runs (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE')),
+      type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE', 'ASN_LOOKUP')),
       task_kind TEXT,
       task_payload TEXT,
       scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
@@ -246,7 +246,7 @@ function initSchema(db) {
     CREATE TABLE IF NOT EXISTS scan_jobs (
       run_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE')),
+      type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE', 'ASN_LOOKUP')),
       task_kind TEXT,
       task_payload TEXT,
       scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
@@ -544,6 +544,94 @@ function migrateProviderScanScopes(db) {
   }
 }
 
+function migrateScanTaskTypes(db) {
+  const rows = db
+    .prepare(`
+      SELECT name, sql
+      FROM sqlite_schema
+      WHERE type = 'table'
+        AND name IN ('scan_runs', 'scan_jobs')
+        AND sql IS NOT NULL
+        AND sql LIKE '%type IN (%'
+        AND sql NOT LIKE '%ASN_LOOKUP%'
+    `)
+    .all();
+
+  if (!rows.length) {
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    if (rows.some((row) => row.name === "scan_runs")) {
+      db.exec(`
+        CREATE TABLE scan_runs__type_migration (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE', 'ASN_LOOKUP')),
+          task_kind TEXT,
+          task_payload TEXT,
+          scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
+          cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+          status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'RUNNING', 'SUCCESS', 'FAILED')),
+          progress INTEGER NOT NULL DEFAULT 0,
+          stage TEXT,
+          processed INTEGER NOT NULL DEFAULT 0,
+          total INTEGER NOT NULL DEFAULT 0,
+          started_at TEXT,
+          finished_at TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO scan_runs__type_migration (
+          id, project_id, type, task_kind, task_payload, scan_scope, cancel_requested,
+          status, progress, stage, processed, total, started_at, finished_at, error, created_at
+        )
+        SELECT
+          id, project_id, type, task_kind, task_payload, scan_scope, cancel_requested,
+          status, progress, stage, processed, total, started_at, finished_at, error, created_at
+        FROM scan_runs;
+
+        DROP TABLE scan_runs;
+        ALTER TABLE scan_runs__type_migration RENAME TO scan_runs;
+        CREATE INDEX IF NOT EXISTS idx_scan_runs_project_created ON scan_runs(project_id, created_at DESC);
+      `);
+    }
+
+    if (rows.some((row) => row.name === "scan_jobs")) {
+      db.exec(`
+        CREATE TABLE scan_jobs__type_migration (
+          run_id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('PASSIVE_SCAN', 'DNS_RESOLVE', 'ASN_LOOKUP')),
+          task_kind TEXT,
+          task_payload TEXT,
+          scan_scope TEXT NOT NULL DEFAULT 'core' CHECK(scan_scope IN ('core', 'extended', 'dorks', 'all', 'fullypassive') OR scan_scope LIKE 'provider:%'),
+          status TEXT NOT NULL CHECK(status IN ('QUEUED', 'RUNNING')),
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          FOREIGN KEY(run_id) REFERENCES scan_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO scan_jobs__type_migration (
+          run_id, project_id, type, task_kind, task_payload, scan_scope, status, created_at, started_at
+        )
+        SELECT run_id, project_id, type, task_kind, task_payload, scan_scope, status, created_at, started_at
+        FROM scan_jobs;
+
+        DROP TABLE scan_jobs;
+        ALTER TABLE scan_jobs__type_migration RENAME TO scan_jobs;
+        CREATE INDEX IF NOT EXISTS idx_scan_jobs_status_created ON scan_jobs(status, created_at);
+      `);
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 let state = null;
 
 function openDatabase(rawPath = process.env.SQLITE_PATH) {
@@ -562,6 +650,7 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
   migrateProjectsDomainNotUnique(db);
   migrateProjectDomainsDomainNotUnique(db);
   migrateProviderScanScopes(db);
+  migrateScanTaskTypes(db);
   initSchema(db);
   ensureColumnExists(
     db,

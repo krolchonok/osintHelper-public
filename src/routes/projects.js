@@ -1640,7 +1640,12 @@ router.post("/:id/subdomains/clear-unresolved", requireApiUser(), (req, res) => 
   const result = db.prepare(`
     DELETE FROM subdomains
     WHERE project_id = ? AND is_root = 0
-      AND id NOT IN (SELECT DISTINCT subdomain_id FROM dns_records WHERE project_id = ?)
+      AND id NOT IN (
+        SELECT DISTINCT subdomain_id
+        FROM dns_records
+        WHERE project_id = ?
+          AND record_type IN ('A', 'AAAA')
+      )
   `).run(id, id);
 
   res.json({ ok: true, deleted: result.changes });
@@ -2737,6 +2742,43 @@ router.get("/:id/asn", requireApiUser(), (req, res) => {
   res.json({ result: data, updatedAt: row.updated_at });
 });
 
+function loadProjectAsnData(db, projectId) {
+  const row = db.prepare("SELECT data_json FROM project_asn WHERE project_id = ? LIMIT 1").get(projectId);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.data_json);
+  } catch {
+    return null;
+  }
+}
+
+function saveProjectAsnData(db, projectId, data) {
+  const now = nowIso();
+  db.prepare(`
+    INSERT INTO project_asn (project_id, data_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(project_id)
+    DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at
+  `).run(projectId, JSON.stringify(data || {}), now, now);
+}
+
+function pruneLaborScope(db, projectId, removedAsns) {
+  if (!removedAsns.size) return;
+  const row = db.prepare("SELECT labor_scope_json FROM projects WHERE id = ? LIMIT 1").get(projectId);
+  if (!row?.labor_scope_json) return;
+  let scope = null;
+  try {
+    scope = JSON.parse(row.labor_scope_json);
+  } catch {
+    scope = null;
+  }
+  if (!Array.isArray(scope)) return;
+  const nextScope = scope.filter((asn) => !removedAsns.has(String(asn || "").trim().toUpperCase()));
+  if (nextScope.length !== scope.length) {
+    db.prepare("UPDATE projects SET labor_scope_json = ? WHERE id = ?").run(JSON.stringify(nextScope), projectId);
+  }
+}
+
 router.post("/:id/asn-task", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
@@ -2745,15 +2787,70 @@ router.post("/:id/asn-task", requireApiUser(), (req, res) => {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "ASN" });
+  const run = startRun(id, "ASN_LOOKUP", { scanScope: "core", taskKind: "ASN" });
   enqueueScanJob({
     runId: run.id,
     projectId: id,
-    type: "PASSIVE_SCAN",
+    type: "ASN_LOOKUP",
     scanScope: run.scanScope,
     taskKind: "ASN",
   });
   res.json({ ok: true, runId: run.id, taskKind: "ASN" });
+});
+
+router.delete("/:id/asn", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  db.prepare("DELETE FROM project_asn WHERE project_id = ?").run(id);
+  db.prepare("UPDATE projects SET labor_scope_json = NULL WHERE id = ?").run(id);
+  res.json({ ok: true, result: null });
+});
+
+router.delete("/:id/asn/zones", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rawAsns = Array.isArray(req.body?.asns) ? req.body.asns : [];
+  const removeSet = new Set(
+    rawAsns
+      .map((asn) => String(asn || "").trim().toUpperCase())
+      .filter((asn) => /^AS\d+$/.test(asn)),
+  );
+  if (!removeSet.size) {
+    res.status(400).json({ error: "asns must contain ASN strings like AS13335" });
+    return;
+  }
+
+  const data = loadProjectAsnData(db, id);
+  if (!data || !Array.isArray(data.asns)) {
+    res.status(404).json({ error: "ASN data not found" });
+    return;
+  }
+
+  const before = data.asns.length;
+  data.asns = data.asns.filter((entry) => !removeSet.has(String(entry?.asn || "").trim().toUpperCase()));
+  data.resolvedAsns = data.asns.length;
+  data.updatedAt = nowIso();
+
+  if (data.asns.length === 0) {
+    db.prepare("DELETE FROM project_asn WHERE project_id = ?").run(id);
+  } else {
+    saveProjectAsnData(db, id, data);
+  }
+  pruneLaborScope(db, id, removeSet);
+
+  res.json({ ok: true, removed: before - data.asns.length, result: data.asns.length ? data : null });
 });
 
 router.get("/:id/labor-scope", requireApiUser(), (req, res) => {

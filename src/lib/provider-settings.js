@@ -3,14 +3,8 @@ const path = require("node:path");
 const YAML = require("yaml");
 const { getDbState } = require("../db");
 const { encryptToken, decryptToken } = require("./crypto");
+const { parse2ipKeys } = require("./2ip");
 const { parseIntelxKeys } = require("./intelx");
-
-function parse2ipKeys(rawToken) {
-  return String(rawToken || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
 
 function parseNetlasKeys(rawToken) {
   return String(rawToken || "")
@@ -70,6 +64,16 @@ function readEnvProviderToken(providerId) {
       process.env.NETLAS_API_KEY ||
       process.env.NETLAS ||
       process.env.netlas;
+    return typeof raw === "string" ? raw.trim() : "";
+  }
+
+  if (providerId === "2ip") {
+    const raw =
+      process.env.TWOIP_API_KEYS ||
+      process.env.TWOIP_API_KEY ||
+      process.env.TWOIP ||
+      process.env["2IP_API_KEYS"] ||
+      process.env["2IP_API_KEY"];
     return typeof raw === "string" ? raw.trim() : "";
   }
 

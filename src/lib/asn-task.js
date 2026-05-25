@@ -1,7 +1,7 @@
 const { Resolver } = require("node:dns/promises");
 const { getDbState } = require("../db");
 const { clampProgress, nowIso } = require("./utils");
-const { fetch2ipProvider, parse2ipKeys, create2ipKeyRotator } = require("./2ip");
+const { fetch2ipAsnInfo, fetch2ipProvider, parse2ipKeys, create2ipKeyRotator } = require("./2ip");
 const { getProviderRuntimeSettings } = require("./provider-settings");
 
 function reverseIpv4(ip) {
@@ -153,6 +153,25 @@ async function executeAsnTask(projectId, onProgress) {
     if (asnMap.has(asnNum)) asnMap.get(asnNum).org = name;
   }
 
+  await emit(92, "Запрос URL компаний-владельцев (2ip)");
+  const asnEntriesForOwner = Array.from(asnMap.values());
+  await mapWithConcurrency(asnEntriesForOwner, async (entry, i) => {
+    try {
+      const data = await fetch2ipAsnInfo(entry.asnNum);
+      entry.ownerUrl = data?.ownerUrl || "";
+      entry.ownerSourceUrl = data?.sourceUrl || "";
+    } catch {
+      entry.ownerUrl = "";
+      entry.ownerSourceUrl = "";
+    }
+    await emit(
+      92 + Math.floor(((i + 1) / asnEntriesForOwner.length) * 1),
+      `2ip ASN: AS${entry.asnNum}`,
+      i + 1,
+      asnEntriesForOwner.length,
+    );
+  }, 2);
+
   const providerSettings = getProviderRuntimeSettings();
   const twoIpSetting = providerSettings.find((s) => s.provider === "2ip" && s.enabled && s.token);
   if (twoIpSetting) {
@@ -185,6 +204,8 @@ async function executeAsnTask(projectId, onProgress) {
       asnNum: entry.asnNum,
       org: entry.org || "",
       site: entry.site || "",
+      ownerUrl: entry.ownerUrl || "",
+      ownerSourceUrl: entry.ownerSourceUrl || "",
       country: entry.country,
       rir: entry.rir,
       ips: [...entry.ips].sort(),

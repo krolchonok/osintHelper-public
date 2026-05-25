@@ -53,6 +53,7 @@ PASSIVE_SOURCE_CONCURRENCY=24
 HTTP_ERROR_LOG_ENABLED=false
 HTTP_ERROR_LOG_FILE=./data/http-errors.log
 NETLAS_API_KEY=
+TWOIP_API_KEYS=
 ```
 
 Если `ADMIN_EMAIL`/`ADMIN_PASSWORD` пустые, при старте генерируется one-time setup URL.
@@ -77,6 +78,7 @@ NETLAS_API_KEY=
 #### Новые возможности сканирования
 
 - **Netlas Integration**: Поддержка Netlas для поиска поддоменов и IP. Требуется `NETLAS_API_KEY`.
+- **2ip Integration**: Geo/provider/hosting lookup для корневого домена проекта. Ключи можно хранить в Provider Settings или `TWOIP_API_KEYS` через запятую.
 - **ASN Lookup**: Автоматический поиск ASN, названий организаций и стран для всех зарезолвленных IP-адресов проекта.
 - **Scan Selected**: Возможность запустить пассивное сканирование (включая конкретных провайдеров) только для выбранных поддоменов.
 

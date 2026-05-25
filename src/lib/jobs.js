@@ -181,6 +181,8 @@ async function executeRun(payload, onQueueProgress) {
       await executeDorkStatsTask(payload.projectId, progressReporter, payload.runId);
     } else if (payload.taskKind === "ASN") {
       await executeAsnTask(payload.projectId, progressReporter);
+    } else if (payload.type === "ASN_LOOKUP") {
+      await executeAsnTask(payload.projectId, progressReporter);
     } else if (payload.type === "PASSIVE_SCAN") {
       await executePassiveScan(
         payload.projectId,

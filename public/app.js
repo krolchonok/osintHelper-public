@@ -992,6 +992,8 @@
         const runTypeLabel =
           run.taskKind === "WHOIS"
             ? "WHOIS"
+            : run.taskKind === "ASN"
+              ? "ASN_LOOKUP"
             : run.taskKind === "VT_DEEP"
               ? "VT_DEEP"
               : run.taskKind === "WEBARCHIVE"
@@ -1005,6 +1007,7 @@
               : run.type;
         const scopeLabel =
           run.taskKind === "WHOIS" ||
+          run.taskKind === "ASN" ||
           run.taskKind === "VT_DEEP" ||
           run.taskKind === "WEBARCHIVE" ||
           run.taskKind === "DORK_STATS" ||
@@ -1103,6 +1106,9 @@
     }
     if (run.taskKind === "WHOIS") {
       return "WHOIS";
+    }
+    if (run.taskKind === "ASN") {
+      return "ASN_LOOKUP";
     }
     if (run.taskKind === "VT_DEEP") {
       return "VT_DEEP";
@@ -1651,7 +1657,7 @@
     `;
   }
 
-  function buildAsnTable(asnData) {
+  function buildAsnTable(asnData, selectedAsnZones = new Set()) {
     if (!asnData) {
       return '<p class="hint">ASN-данные ещё не загружены. Нажмите «Запустить ASN-лукап».</p>';
     }
@@ -1682,6 +1688,7 @@
     }
 
     const rows = asns.map((entry) => {
+      const asn = String(entry.asn || "").trim();
       const ipsHtml = entry.ips
         .map((ip) => `<span class="pill tiny mono">${escapeHtml(ip)}</span>`)
         .join(" ");
@@ -1695,11 +1702,23 @@
       const siteHtml = entry.site
         ? `<a href="${escapeHtml(entry.site)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(entry.site)}</a>`
         : "—";
+      const ownerUrlHtml = entry.ownerUrl
+        ? `<a href="${escapeHtml(entry.ownerUrl)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(entry.ownerUrl)}</a>`
+        : "—";
 
       return `
         <tr>
+          <td>
+            <input
+              type="checkbox"
+              class="asn-zone-check"
+              data-asn="${escapeHtml(asn)}"
+              ${selectedAsnZones.has(asn) ? "checked" : ""}
+            />
+          </td>
           <td class="mono"><strong>${escapeHtml(entry.asn || "—")}</strong></td>
           <td>${escapeHtml(entry.org || "—")}</td>
+          <td>${ownerUrlHtml}</td>
           <td>${siteHtml}</td>
           <td>${escapeHtml(entry.country || "—")}</td>
           <td>${escapeHtml(entry.rir || "—")}</td>
@@ -1717,8 +1736,16 @@
         <table class="table">
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  id="asn-zone-select-all"
+                  ${asns.length && asns.every((entry) => selectedAsnZones.has(String(entry.asn || "").trim())) ? "checked" : ""}
+                />
+              </th>
               <th>ASN</th>
               <th>Организация</th>
+              <th>URL компании</th>
               <th>Сайт</th>
               <th>Страна</th>
               <th>RIR</th>
@@ -2279,6 +2306,7 @@
     let laborSettings = null;
     let activeDataTab = "subdomains";
     const selectedSubdomainIds = new Set();
+    const selectedAsnZones = new Set();
     const selectedEmailSourceKeys = new Set();
     const selectedIntelxHitKeys = new Set();
     let selectedRunId = runs[0] ? runs[0].id : null;
@@ -2527,9 +2555,11 @@
               <div class="stack-md project-data-toolbar-stack">
                 <div class="row wrap project-panel-toolbar">
                   <button class="btn btn-primary" id="run-asn-btn" type="button">Запустить ASN-лукап</button>
+                  <button class="btn btn-danger" id="asn-delete-selected-btn" type="button">Удалить выбранные</button>
+                  <button class="btn btn-danger" id="asn-clear-btn" type="button">Очистить</button>
                   <button class="btn btn-ghost" id="asn-export-csv-btn" type="button">Экспорт CSV</button>
                 </div>
-                <div class="hint">Определяет ASN-зоны для всех зарезолвленных IP через DNS-запросы к Team Cymru (без внешних API).</div>
+                <div class="hint">Определяет ASN-зоны через Team Cymru и URL компаний-владельцев через 2ip.io.</div>
               </div>
               <div id="asn-action-message"></div>
               <div id="asn-table-root"></div>
@@ -2610,6 +2640,8 @@
     const asnActionMessageEl = document.getElementById("asn-action-message");
     const asnTableRoot = document.getElementById("asn-table-root");
     const runAsnBtn = document.getElementById("run-asn-btn");
+    const asnDeleteSelectedBtn = document.getElementById("asn-delete-selected-btn");
+    const asnClearBtn = document.getElementById("asn-clear-btn");
     const asnExportCsvBtn = document.getElementById("asn-export-csv-btn");
     const subdomainCreateForm = document.getElementById("subdomain-create-form");
     const subdomainCreateHostInput = document.getElementById("subdomain-create-host");
@@ -3057,8 +3089,44 @@
     }
 
     function renderAsn() {
+      const asns = Array.isArray(asnData?.asns) ? asnData.asns : [];
+      const validAsns = new Set(asns.map((entry) => String(entry.asn || "").trim()).filter(Boolean));
+      for (const asn of Array.from(selectedAsnZones)) {
+        if (!validAsns.has(asn)) {
+          selectedAsnZones.delete(asn);
+        }
+      }
       asnExportCsvBtn.disabled = !asnData;
-      asnTableRoot.innerHTML = buildAsnTable(asnData);
+      asnClearBtn.disabled = !asnData;
+      asnDeleteSelectedBtn.disabled = selectedAsnZones.size === 0;
+      asnDeleteSelectedBtn.textContent = selectedAsnZones.size > 0
+        ? `Удалить выбранные [${selectedAsnZones.size}]`
+        : "Удалить выбранные";
+      asnTableRoot.innerHTML = buildAsnTable(asnData, selectedAsnZones);
+
+      const selectAll = document.getElementById("asn-zone-select-all");
+      if (selectAll) {
+        selectAll.addEventListener("change", () => {
+          selectedAsnZones.clear();
+          if (selectAll.checked) {
+            for (const asn of validAsns) selectedAsnZones.add(asn);
+          }
+          renderAsn();
+        });
+      }
+
+      document.querySelectorAll(".asn-zone-check").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const asn = String(checkbox.getAttribute("data-asn") || "").trim();
+          if (!asn) return;
+          if (checkbox.checked) {
+            selectedAsnZones.add(asn);
+          } else {
+            selectedAsnZones.delete(asn);
+          }
+          renderAsn();
+        });
+      });
     }
 
     function renderLabor() {
@@ -3600,11 +3668,13 @@
 
     function exportAsnCsv() {
       if (!asnData || !Array.isArray(asnData.asns) || !asnData.asns.length) return false;
-      const rows = [["ASN", "Организация", "Страна", "RIR", "CIDR", "IP-адреса", "Поддомены"]];
+      const rows = [["ASN", "Организация", "URL компании", "Сайт", "Страна", "RIR", "CIDR", "IP-адреса", "Поддомены"]];
       for (const entry of asnData.asns) {
         rows.push([
           entry.asn || "",
           entry.org || "",
+          entry.ownerUrl || "",
+          entry.site || "",
           entry.country || "",
           entry.rir || "",
           (entry.cidrs || []).join("; "),
@@ -4297,6 +4367,51 @@
         asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось запустить ASN-лукап"));
       } finally {
         runAsnBtn.disabled = false;
+      }
+    });
+
+    asnDeleteSelectedBtn.addEventListener("click", async () => {
+      if (selectedAsnZones.size === 0) return;
+      const asns = Array.from(selectedAsnZones);
+      if (!window.confirm(`Удалить выбранные ASN-зоны: ${asns.join(", ")}?`)) return;
+
+      asnActionMessageEl.innerHTML = "";
+      asnDeleteSelectedBtn.disabled = true;
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/asn/zones`, {
+          method: "DELETE",
+          body: { asns },
+        });
+        selectedAsnZones.clear();
+        asnData = payload && payload.result ? payload.result : null;
+        renderAsn();
+        renderLabor();
+        showPopup("ASN-зоны удалены", "success");
+      } catch (error) {
+        asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось удалить ASN-зоны"));
+      } finally {
+        asnDeleteSelectedBtn.disabled = selectedAsnZones.size === 0;
+      }
+    });
+
+    asnClearBtn.addEventListener("click", async () => {
+      if (!asnData) return;
+      if (!window.confirm("Очистить все ASN-данные проекта?")) return;
+
+      asnActionMessageEl.innerHTML = "";
+      asnClearBtn.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/asn`, { method: "DELETE" });
+        selectedAsnZones.clear();
+        asnData = null;
+        laborScope = null;
+        renderAsn();
+        renderLabor();
+        showPopup("ASN-данные очищены", "success");
+      } catch (error) {
+        asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось очистить ASN-данные"));
+      } finally {
+        asnClearBtn.disabled = !asnData;
       }
     });
 

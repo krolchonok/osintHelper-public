@@ -1,6 +1,7 @@
 const CHECK_TIMEOUT_MS = 15000;
 const { fetchIntelxAccountInfo } = require("./intelx");
 const { parseNetlasKeys } = require("./provider-settings");
+const { parse2ipKeys } = require("./2ip");
 
 function parseTwoPartToken(rawToken) {
   const raw = String(rawToken || "").trim();
@@ -272,6 +273,29 @@ async function checkProviderLimit(provider, token) {
       summary: `keys=${accounts.length}, available=${totalAvailable}, max=${totalMax}`,
       limit: totalMax || null,
       remaining: totalAvailable,
+      details: accounts,
+    };
+  }
+
+  if (providerId === "2ip") {
+    const keys = parse2ipKeys(rawToken);
+    const accounts = await Promise.all(keys.map(async (key) => {
+      const { data, headers } = await requestJson(
+        `https://api.2ip.me/geo.json?ip=${encodeURIComponent("8.8.8.8")}&token=${encodeURIComponent(key)}`,
+      );
+      const rates = pickRateLimitHeaders(headers);
+      return {
+        key: `${key.slice(0, 6)}...`,
+        ok: Boolean(data?.ip),
+        rateLimit: rates.limit,
+        rateRemaining: rates.remaining,
+      };
+    }));
+    return {
+      provider: providerId,
+      summary: accounts.map((item) => `${item.key}: ${item.ok ? "valid" : "checked"}`).join(" | "),
+      limit: null,
+      remaining: null,
       details: accounts,
     };
   }
