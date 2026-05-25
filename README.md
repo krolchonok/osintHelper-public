@@ -120,6 +120,10 @@ private keys, `.git`/`.svn`, source maps, directory listing, документы,
 ```bash
 npm run dev            # сервер с watch
 npm run start          # сервер
+npm run start:hot      # сервер с Ctrl+U для pull/update/restart и Ctrl+R для restart
+npm run update:start   # git pull --ff-only, npm ci, затем запуск сервера
+npm run update:dev     # git pull --ff-only, npm ci, затем запуск dev-сервера
+npm run update:docker  # git pull --ff-only, пересборка и рестарт docker compose
 npm run worker         # отдельный worker (если ENABLE_INLINE_WORKER=false)
 npm run auth:init-admin
 npm run tokens:export  # вывести готовую команду импорта токенов

@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "start:hot": "node src/scripts/start-hot-update.js",
+    "update:start": "git pull --ff-only && npm ci && npm run start",
+    "update:dev": "git pull --ff-only && npm ci && npm run dev",
+    "update:docker": "git pull --ff-only && docker compose up -d --build --force-recreate",
     "worker": "node src/worker.js",
     "auth:init-admin": "node src/scripts/init-admin.js",
     "tokens:export": "node src/scripts/export-provider-tokens.js",
