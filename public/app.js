@@ -2717,7 +2717,8 @@
               <div class="row wrap project-panel-toolbar">
                 <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
                 <button class="btn btn-primary" id="subdomain-create-btn" type="submit">Добавить поддомен</button>
-                <button class="btn btn-secondary" id="resolve-selected-btn" type="button">Резолв выбранных (быстрый)</button>
+                <button class="btn btn-secondary" id="resolve-selected-btn" type="button" title="Только A/AAAA">Резолв (быстрый)</button>
+                <button class="btn btn-secondary" id="run-full-dns-btn" type="button" title="A, MX, TXT, NS, CNAME">Массовый nslookup</button>
                 <button class="btn btn-secondary" id="run-netlas-dns-btn" type="button">Netlas DNS (массово)</button>
                 <select id="selected-scan-provider" class="text-input mono" aria-label="Провайдер для скана выбранных">
                   ${selectedScanProviderOptions}
@@ -2952,6 +2953,7 @@
     const asnActionMessageEl = document.getElementById("asn-action-message");
     const asnTableRoot = document.getElementById("asn-table-root");
     const runAsnBtn = document.getElementById("run-asn-btn");
+    const runFullDnsBtn = document.getElementById("run-full-dns-btn");
     const runNetlasDnsBtn = document.getElementById("run-netlas-dns-btn");
     const asnDeleteSelectedBtn = document.getElementById("asn-delete-selected-btn");
     const asnClearBtn = document.getElementById("asn-clear-btn");
@@ -4935,6 +4937,31 @@
         asnActionMessageEl.innerHTML = renderErrorBanner(friendlyError(error, "Не удалось запустить ASN-лукап"));
       } finally {
         runAsnBtn.disabled = false;
+      }
+    });
+
+    runFullDnsBtn.addEventListener("click", async () => {
+      if (selectedSubdomainIds.size === 0) {
+        alert("Выберите поддомены для nslookup");
+        return;
+      }
+      runFullDnsBtn.disabled = true;
+      try {
+        const res = await api(`/api/projects/${encodeURIComponent(projectId)}/scan-selected`, {
+          method: "POST",
+          body: {
+            type: "DNS_RESOLVE",
+            scanScope: "extended", // Uses more resolvers and ensures full collection
+            subdomainIds: Array.from(selectedSubdomainIds),
+          },
+        });
+        selectedRunId = res.id;
+        showPopup("Массовый nslookup запущен", "success");
+        await refreshRuns();
+      } catch (error) {
+        alert(friendlyError(error, "Не удалось запустить nslookup"));
+      } finally {
+        runFullDnsBtn.disabled = false;
       }
     });
 
