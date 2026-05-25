@@ -1240,7 +1240,7 @@
         );
 
         return `
-          <tr>
+          <tr data-host="${escapeHtml(subdomain.host)}" data-resolved="${ips.length ? "1" : "0"}">
             <td>
               <input
                 type="checkbox"
@@ -2432,6 +2432,7 @@
     let timelineClusterize = null;
     let subdomainsFilterFrame = null;
     let subdomainsFilterTimer = null;
+    let hideUnresolvedSubdomains = false;
     const completedDataRefreshKeys = new Set();
     let disposed = false;
     const projectDomainsMarkup = projectDomains
@@ -2515,6 +2516,10 @@
             <div class="stack-md project-data-toolbar-stack">
               <div class="row wrap project-panel-toolbar subdomains-scan-toolbar">
                 <input id="subdomains-search-input" class="text-input mono" type="search" placeholder="Поиск по поддоменам на текущей странице" />
+                <label class="toggle">
+                  <input id="subdomains-hide-unresolved" type="checkbox" />
+                  Скрыть нерезолвленные
+                </label>
                 <button class="btn btn-primary" id="run-passive-all-btn" type="button">Запустить скан (всё)</button>
                 <button class="btn btn-secondary" id="run-resolve-fast-btn" type="button">DNS-резолв (быстрый)</button>
                 <button class="btn btn-ghost" id="run-resolve-extended-btn" type="button">DNS-резолв (расширенный)</button>
@@ -2775,6 +2780,7 @@
     const clearUnresolvedBtn = document.getElementById("clear-unresolved-btn");
     const subdomainDeleteAllBtn = document.getElementById("subdomain-delete-all-btn");
     const subdomainsSearchInput = document.getElementById("subdomains-search-input");
+    const subdomainsHideUnresolvedInput = document.getElementById("subdomains-hide-unresolved");
     const subdomainActionMessageEl = document.getElementById("subdomain-action-message");
     const vtDeepLoadBtn = document.getElementById("vtdeep-load-btn");
     const vtDeepExportCsvBtn = document.getElementById("vtdeep-export-csv-btn");
@@ -2967,18 +2973,15 @@
     }
 
     function applySubdomainsSearchFilter() {
-      if (!subdomainsSearchInput) {
-        return;
-      }
-
-      const query = String(subdomainsSearchInput.value || "").trim().toLowerCase();
+      const query = String(subdomainsSearchInput ? subdomainsSearchInput.value || "" : "").trim().toLowerCase();
       const rows = subdomainsTableRoot.querySelectorAll("tbody tr");
 
       rows.forEach((row) => {
-        const firstCell = row.querySelector("td");
-        const hostText = String(firstCell ? firstCell.textContent || "" : "").toLowerCase();
-        const matches = !query || hostText.includes(query);
-        row.hidden = !matches;
+        const hostText = String(row.getAttribute("data-host") || "").toLowerCase();
+        const resolved = row.getAttribute("data-resolved") === "1";
+        const matchesSearch = !query || hostText.includes(query);
+        const matchesResolved = !hideUnresolvedSubdomains || resolved;
+        row.hidden = !(matchesSearch && matchesResolved);
       });
 
     }
@@ -3660,6 +3663,9 @@
       deleteSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       exportSelectedCsvBtn.disabled = disabled || selectedSubdomainIds.size === 0;
       clearUnresolvedBtn.disabled = disabled;
+      if (subdomainsHideUnresolvedInput) {
+        subdomainsHideUnresolvedInput.disabled = disabled;
+      }
       if (subdomainsSearchInput) {
         subdomainsSearchInput.disabled = disabled;
       }
@@ -4445,6 +4451,12 @@
     if (subdomainsSearchInput) {
       subdomainsSearchInput.addEventListener("input", () => {
         scheduleSubdomainsSearchFilter();
+      });
+    }
+    if (subdomainsHideUnresolvedInput) {
+      subdomainsHideUnresolvedInput.addEventListener("change", () => {
+        hideUnresolvedSubdomains = Boolean(subdomainsHideUnresolvedInput.checked);
+        applySubdomainsSearchFilter();
       });
     }
 
