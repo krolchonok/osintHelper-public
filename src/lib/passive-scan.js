@@ -1230,6 +1230,7 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
   );
 
   const sourceReports = [];
+  let completedSources = 0;
   const sourceResults = await mapWithConcurrency(
     filteredSources,
     sourceConcurrency,
