@@ -113,6 +113,25 @@
       .replace(/'/g, "&#39;");
   }
 
+  function normalizeExternalUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+    if (/^(https?:)?\/\//i.test(raw) || /^mailto:/i.test(raw)) {
+      return raw;
+    }
+    return `https://${raw.replace(/^\/+/, "")}`;
+  }
+
+  function formatExternalLink(url, label = url) {
+    const href = normalizeExternalUrl(url);
+    if (!href) {
+      return "";
+    }
+    return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(label || url)}</a>`;
+  }
+
   function normalizePath(pathname) {
     if (!pathname) {
       return "/";
@@ -1699,12 +1718,13 @@
         ? entry.hosts.map((h) => `<span class="pill tiny mono">${escapeHtml(h)}</span>`).join(" ")
         : "—";
 
-      const siteHtml = entry.site
-        ? `<a href="${escapeHtml(entry.site)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(entry.site)}</a>`
-        : "—";
-      const ownerUrlHtml = entry.ownerUrl
-        ? `<a href="${escapeHtml(entry.ownerUrl)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(entry.ownerUrl)}</a>`
-        : "—";
+      const asnNum = String(entry.asnNum || entry.asn || "").replace(/^AS/i, "").trim();
+      const ownerSourceUrl = entry.ownerSourceUrl || (asnNum ? `https://2ip.io/as/${asnNum}/` : "");
+      const siteHtml = formatExternalLink(entry.site) || "—";
+      const ownerUrlHtml =
+        formatExternalLink(entry.ownerUrl) ||
+        formatExternalLink(ownerSourceUrl, "2ip ASN") ||
+        "—";
 
       return `
         <tr>
@@ -2555,8 +2575,8 @@
               <div class="stack-md project-data-toolbar-stack">
                 <div class="row wrap project-panel-toolbar">
                   <button class="btn btn-primary" id="run-asn-btn" type="button">Запустить ASN-лукап</button>
-                  <button class="btn btn-danger" id="asn-delete-selected-btn" type="button">Удалить выбранные</button>
-                  <button class="btn btn-danger" id="asn-clear-btn" type="button">Очистить</button>
+                  <button class="btn btn-danger" id="asn-delete-selected-btn" type="button">Удалить выбранные ASN</button>
+                  <button class="btn btn-danger" id="asn-clear-btn" type="button">Очистить ASN</button>
                   <button class="btn btn-ghost" id="asn-export-csv-btn" type="button">Экспорт CSV</button>
                 </div>
                 <div class="hint">Определяет ASN-зоны через Team Cymru и URL компаний-владельцев через 2ip.io.</div>
@@ -3100,8 +3120,8 @@
       asnClearBtn.disabled = !asnData;
       asnDeleteSelectedBtn.disabled = selectedAsnZones.size === 0;
       asnDeleteSelectedBtn.textContent = selectedAsnZones.size > 0
-        ? `Удалить выбранные [${selectedAsnZones.size}]`
-        : "Удалить выбранные";
+        ? `Удалить выбранные ASN [${selectedAsnZones.size}]`
+        : "Удалить выбранные ASN";
       asnTableRoot.innerHTML = buildAsnTable(asnData, selectedAsnZones);
 
       const selectAll = document.getElementById("asn-zone-select-all");
@@ -4396,7 +4416,7 @@
 
     asnClearBtn.addEventListener("click", async () => {
       if (!asnData) return;
-      if (!window.confirm("Очистить все ASN-данные проекта?")) return;
+      if (!window.confirm("Очистить ASN-данные этого проекта? Сам проект не будет удалён.")) return;
 
       asnActionMessageEl.innerHTML = "";
       asnClearBtn.disabled = true;
