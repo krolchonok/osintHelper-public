@@ -60,18 +60,18 @@ router.get("/org-domains", requireApiUser(), async (req, res) => {
   }
 
   try {
-    // search_field_id 80 is \"Domain with same organization (Domain WHOIS)\"
-    // node_type \"organization\"
-    const data = await netlasDiscoveryProxy(\"organization\", org, 80);
+    // search_field_id 80 is "Domain with same organization (Domain WHOIS)"
+    // node_type "organization"
+    const data = await netlasDiscoveryProxy("organization", org, 80);
     
     // Extract domains from aggregations
     const domains = (data.aggregations || [])
-      .filter(item => item.node_type === \"domain\")
+      .filter(item => item.node_type === "domain")
       .map(item => item.node_value);
 
     res.json({ domains });
   } catch (err) {
-    console.error(\"[netlas-proxy] error:\", err);
+    console.error("[netlas-proxy] error:", err);
     res.status(500).json({ error: err.message });
   }
 });
