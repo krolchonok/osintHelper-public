@@ -1023,6 +1023,8 @@
                 ? "INTELX_LEAKS"
               : run.taskKind === "DNS_RESOLVE_SELECTED"
                 ? "DNS_RESOLVE_SELECTED"
+              : run.taskKind === "READY_CHECK"
+                ? "READY_CHECK"
               : run.type;
         const scopeLabel =
           run.taskKind === "WHOIS" ||
@@ -1031,7 +1033,8 @@
           run.taskKind === "WEBARCHIVE" ||
           run.taskKind === "DORK_STATS" ||
           run.taskKind === "INTELX_LEAKS" ||
-          run.taskKind === "DNS_RESOLVE_SELECTED"
+          run.taskKind === "DNS_RESOLVE_SELECTED" ||
+          run.taskKind === "READY_CHECK"
             ? "-"
             : run.type === "DNS_RESOLVE"
             ? (run.scanScope === "core" ? "fast" : "extended")
@@ -1140,6 +1143,9 @@
     }
     if (run.taskKind === "DNS_RESOLVE_SELECTED") {
       return "DNS_RESOLVE_SELECTED";
+    }
+    if (run.taskKind === "READY_CHECK") {
+      return "READY_CHECK";
     }
     return run.type || "-";
   }
@@ -1882,6 +1888,79 @@
     `;
   }
 
+  function buildAvailabilityTable(data, readyModeEnabled) {
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    const checkedAt = data?.checkedAt || data?.cachedAt ? formatDate(data.checkedAt || data.cachedAt) : "—";
+    const statsHtml = `
+      <div class="data-stat-grid" style="margin-bottom:14px">
+        <div class="data-stat-card">
+          <div class="data-stat-value mono">${escapeHtml(String(data?.total || 0))}</div>
+          <div class="data-stat-label">Целей</div>
+        </div>
+        <div class="data-stat-card">
+          <div class="data-stat-value mono">${escapeHtml(String(data?.reachable || 0))}</div>
+          <div class="data-stat-label">Доступны</div>
+        </div>
+        <div class="data-stat-card">
+          <div class="data-stat-value mono">${escapeHtml(String(data?.unreachable || 0))}</div>
+          <div class="data-stat-label">Недоступны</div>
+        </div>
+      </div>
+    `;
+
+    const modeNote = readyModeEnabled
+      ? '<p class="hint">Режим готового проекта включён. Проверки отправляют реальные HTTP/HTTPS запросы к целевым хостам.</p>'
+      : '<p class="hint">Режим готового проекта выключен. Включите его, чтобы запускать активные проверки доступности.</p>';
+
+    if (!rows.length) {
+      return `${modeNote}${statsHtml}<p class="hint">Проверок доступности пока нет.</p>`;
+    }
+
+    const tableRows = rows.map((row) => {
+      const checks = Array.isArray(row.checks) ? row.checks : [];
+      const details = checks
+        .map((check) => {
+          const status = check.status == null ? "ERR" : String(check.status);
+          const ms = check.ms == null ? "" : ` ${check.ms}ms`;
+          const error = check.error ? ` ${check.error}` : "";
+          return `${check.url || ""} -> ${status}${ms}${error}`;
+        })
+        .join("\n");
+      const bestLink = row.bestUrl ? formatExternalLink(row.bestUrl, row.bestUrl) : "—";
+      return `
+        <tr>
+          <td><span class="pill tiny ${row.ok ? "" : "danger"}">${row.ok ? "OK" : "FAIL"}</span></td>
+          <td class="mono">${escapeHtml(row.host || "—")}</td>
+          <td>${bestLink}</td>
+          <td class="mono">${escapeHtml(row.bestStatus == null ? "—" : String(row.bestStatus))}</td>
+          <td class="mono">${escapeHtml(row.bestMs == null ? "—" : `${row.bestMs} ms`)}</td>
+          <td><pre class="mono" style="white-space:pre-wrap;margin:0;font-size:12px">${escapeHtml(details || "—")}</pre></td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      ${modeNote}
+      ${statsHtml}
+      <p class="hint" style="margin-bottom:8px">Последняя проверка: ${escapeHtml(checkedAt)} · режим: ${escapeHtml(data?.mode || "curl")}</p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Статус</th>
+              <th>Хост</th>
+              <th>URL</th>
+              <th>HTTP</th>
+              <th>Время</th>
+              <th>Проверки</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function renderLaborCalc(asnData, laborScope, laborSettings, subdomainsTotal) {
     const norms = laborSettings || { recon: 8, infraVuln: 16, softwareVuln: 24 };
     const asns = asnData && Array.isArray(asnData.asns) ? asnData.asns : [];
@@ -2322,6 +2401,8 @@
     let intelxData = null;
     let emailData = project.emails || null;
     let asnData = project.asn || null;
+    let availabilityData = project.availability || null;
+    let readyModeEnabled = Boolean(project.readyModeEnabled);
     let laborScope = null;
     let laborSettings = null;
     let activeDataTab = "subdomains";
@@ -2427,6 +2508,7 @@
               <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
               <button class="btn btn-ghost" id="tab-asn-btn" type="button">ASN</button>
+              <button class="btn btn-ghost" id="tab-ready-btn" type="button">Готовность</button>
               <button class="btn btn-ghost" id="tab-labor-btn" type="button">Трудозатраты</button>
             </div>
             <div id="subdomains-panel" class="project-data-panel">
@@ -2588,6 +2670,21 @@
             <div id="labor-panel" class="project-data-panel" hidden>
               <div id="labor-panel-root"></div>
             </div>
+            <div id="ready-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
+                <div class="row wrap project-panel-toolbar">
+                  <label class="toggle">
+                    <input type="checkbox" id="ready-mode-toggle" ${readyModeEnabled ? "checked" : ""} />
+                    Готовый проект
+                  </label>
+                  <button class="btn btn-primary" id="ready-check-run-btn" type="button" ${readyModeEnabled ? "" : "disabled"}>Проверить доступность</button>
+                  <button class="btn btn-ghost" id="ready-check-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="hint">Активный режим: выполняет curl-like HTTP/HTTPS проверки доступности доменов и поддоменов проекта.</div>
+              </div>
+              <div id="ready-action-message"></div>
+              <div id="ready-table-root"></div>
+            </div>
           </section>
 
           <section class="panel">
@@ -2642,6 +2739,7 @@
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const tabAsnBtn = document.getElementById("tab-asn-btn");
+    const tabReadyBtn = document.getElementById("tab-ready-btn");
     const tabLaborBtn = document.getElementById("tab-labor-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
@@ -2651,6 +2749,7 @@
     const vtDeepPanel = document.getElementById("vtdeep-panel");
     const intelxPanel = document.getElementById("intelx-panel");
     const asnPanel = document.getElementById("asn-panel");
+    const readyPanel = document.getElementById("ready-panel");
     const laborPanel = document.getElementById("labor-panel");
     const laborPanelRoot = document.getElementById("labor-panel-root");
     const asnActionMessageEl = document.getElementById("asn-action-message");
@@ -2659,6 +2758,11 @@
     const asnDeleteSelectedBtn = document.getElementById("asn-delete-selected-btn");
     const asnClearBtn = document.getElementById("asn-clear-btn");
     const asnExportCsvBtn = document.getElementById("asn-export-csv-btn");
+    const readyModeToggle = document.getElementById("ready-mode-toggle");
+    const readyCheckRunBtn = document.getElementById("ready-check-run-btn");
+    const readyCheckRefreshBtn = document.getElementById("ready-check-refresh-btn");
+    const readyActionMessageEl = document.getElementById("ready-action-message");
+    const readyTableRoot = document.getElementById("ready-table-root");
     const subdomainCreateForm = document.getElementById("subdomain-create-form");
     const subdomainCreateHostInput = document.getElementById("subdomain-create-host");
     const subdomainCreateBtn = document.getElementById("subdomain-create-btn");
@@ -2786,6 +2890,15 @@
         kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
     }
 
+    function setReadyMessage(message, kind) {
+      if (!message) {
+        readyActionMessageEl.innerHTML = "";
+        return;
+      }
+      readyActionMessageEl.innerHTML =
+        kind === "success" ? renderSuccessBanner(message) : renderErrorBanner(message);
+    }
+
     function renderDataTab() {
       const showSubdomains = activeDataTab === "subdomains";
       const showWhois = activeDataTab === "whois";
@@ -2795,6 +2908,7 @@
       const showVtDeep = activeDataTab === "vtdeep";
       const showIntelx = activeDataTab === "intelx";
       const showAsn = activeDataTab === "asn";
+      const showReady = activeDataTab === "ready";
       const showLabor = activeDataTab === "labor";
       subdomainsPanel.hidden = !showSubdomains;
       whoisPanel.hidden = !showWhois;
@@ -2804,6 +2918,7 @@
       vtDeepPanel.hidden = !showVtDeep;
       intelxPanel.hidden = !showIntelx;
       asnPanel.hidden = !showAsn;
+      readyPanel.hidden = !showReady;
       laborPanel.hidden = !showLabor;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
@@ -2813,6 +2928,7 @@
       tabVtDeepBtn.className = showVtDeep ? "btn btn-primary" : "btn btn-ghost";
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
       tabAsnBtn.className = showAsn ? "btn btn-primary" : "btn btn-ghost";
+      tabReadyBtn.className = showReady ? "btn btn-primary" : "btn btn-ghost";
       tabLaborBtn.className = showLabor ? "btn btn-primary" : "btn btn-ghost";
     }
 
@@ -3145,6 +3261,17 @@
       });
     }
 
+    function renderReady() {
+      readyModeToggle.checked = readyModeEnabled;
+      readyCheckRunBtn.disabled = !readyModeEnabled;
+      readyTableRoot.innerHTML = buildAvailabilityTable(availabilityData, readyModeEnabled);
+      if (readyModeEnabled) {
+        setReadyMessage("Готовый режим включает активные HTTP/HTTPS запросы. Запускайте только для своих или разрешённых ресурсов.", "error");
+      } else {
+        setReadyMessage("", "");
+      }
+    }
+
     function renderLabor() {
       const subdomainsTotal = subdomainsPagination ? subdomainsPagination.total : 0;
       laborPanelRoot.innerHTML = buildLaborPanel(asnData, laborScope, laborSettings);
@@ -3219,8 +3346,24 @@
         renderIntelx();
       } else if (activeDataTab === "asn") {
         renderAsn();
+      } else if (activeDataTab === "ready") {
+        renderReady();
       } else if (activeDataTab === "labor") {
         renderLabor();
+      }
+    }
+
+    async function refreshAvailabilityInfo() {
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/availability`);
+        if (disposed) return;
+        readyModeEnabled = Boolean(payload && payload.readyModeEnabled);
+        availabilityData = payload && payload.result ? payload.result : null;
+        if (activeDataTab === "ready") {
+          renderReady();
+        }
+      } catch (error) {
+        setReadyMessage(friendlyError(error, "Не удалось загрузить данные готовности"), "error");
       }
     }
 
@@ -3457,6 +3600,9 @@
         if (hasNewSuccessfulRun("ASN")) {
           await refreshAsnInfo();
         }
+        if (hasNewSuccessfulRun("READY_CHECK")) {
+          await refreshAvailabilityInfo();
+        }
         const hasActiveRuns = runs.some((run) => ACTIVE_STATUSES.has(run.status));
         const shouldRefreshSubdomains = hasActiveRuns || hadActiveRuns;
         hadActiveRuns = hasActiveRuns;
@@ -3502,6 +3648,9 @@
       intelxExportCsvBtn.disabled = disabled || !intelxData;
       dorkStatsExportCsvBtn.disabled = disabled || !dorkStatsData;
       dorkStatsClearBtn.disabled = disabled || !dorkStatsData;
+      readyModeToggle.disabled = disabled;
+      readyCheckRunBtn.disabled = disabled || !readyModeEnabled;
+      readyCheckRefreshBtn.disabled = disabled;
       whoisExportCsvBtn.disabled = disabled || !String(whoisInfoField.value || "").trim();
       runsExportCsvBtn.disabled = disabled || runs.length === 0;
       resolveSelectedBtn.disabled = disabled || selectedSubdomainIds.size === 0;
@@ -4366,10 +4515,74 @@
       }
     });
 
+    tabReadyBtn.addEventListener("click", () => {
+      activeDataTab = "ready";
+      renderDataTab();
+      renderReady();
+      void refreshAvailabilityInfo();
+    });
+
     tabLaborBtn.addEventListener("click", () => {
       activeDataTab = "labor";
       renderDataTab();
       void refreshLaborInfo();
+    });
+
+    readyModeToggle.addEventListener("change", async () => {
+      const nextEnabled = Boolean(readyModeToggle.checked);
+      if (nextEnabled) {
+        const confirmed = window.confirm(
+          "Включить режим готового проекта? Он разрешает активные HTTP/HTTPS проверки доступности целевых ресурсов.",
+        );
+        if (!confirmed) {
+          readyModeToggle.checked = false;
+          return;
+        }
+      }
+
+      readyModeToggle.disabled = true;
+      setReadyMessage("", "");
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/ready-mode`, {
+          method: "PUT",
+          body: { enabled: nextEnabled },
+        });
+        readyModeEnabled = Boolean(payload && payload.readyModeEnabled);
+        renderReady();
+        showPopup(readyModeEnabled ? "Режим готового проекта включён" : "Режим готового проекта выключен", "success");
+      } catch (error) {
+        readyModeToggle.checked = readyModeEnabled;
+        setReadyMessage(friendlyError(error, "Не удалось изменить режим готового проекта"), "error");
+      } finally {
+        readyModeToggle.disabled = false;
+      }
+    });
+
+    readyCheckRunBtn.addEventListener("click", async () => {
+      if (!readyModeEnabled) {
+        setReadyMessage("Сначала включите режим готового проекта", "error");
+        return;
+      }
+      const confirmed = window.confirm("Запустить активную проверку доступности HTTP/HTTPS для доменов и поддоменов проекта?");
+      if (!confirmed) {
+        return;
+      }
+
+      readyCheckRunBtn.disabled = true;
+      setReadyMessage("", "");
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/ready-check-task`, { method: "POST", body: {} });
+        showPopup("Проверка готовности поставлена в очередь", "success");
+        await refreshRuns();
+      } catch (error) {
+        setReadyMessage(friendlyError(error, "Не удалось поставить проверку готовности в очередь"), "error");
+      } finally {
+        readyCheckRunBtn.disabled = !readyModeEnabled;
+      }
+    });
+
+    readyCheckRefreshBtn.addEventListener("click", () => {
+      void refreshAvailabilityInfo();
     });
 
     runAsnBtn.addEventListener("click", async () => {

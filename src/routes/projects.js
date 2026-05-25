@@ -540,6 +540,22 @@ function getCachedDorkStats(projectId) {
   }
 }
 
+function getCachedAvailability(projectId) {
+  const { db } = getDbState();
+  const row = db
+    .prepare("SELECT data_json, updated_at FROM project_availability WHERE project_id = ? LIMIT 1")
+    .get(projectId);
+  if (!row) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(row.data_json);
+    return { ...data, cachedAt: row.updated_at };
+  } catch {
+    return null;
+  }
+}
+
 function extractEmailsFromText(text) {
   const matches = String(text || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
   return Array.from(new Set((matches || []).map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)));
@@ -988,6 +1004,7 @@ function mapProjectWithDomains(project, extra = {}) {
     primaryDomain,
     domains: domains.map((item) => item.domain),
     domainItems: domains,
+    readyModeEnabled: Boolean(project.ready_mode_enabled),
     createdAt: project.created_at,
     updatedAt: project.updated_at,
     ...extra,
@@ -1113,6 +1130,7 @@ router.get("/", requireApiUser(), (_req, res) => {
         p.id,
         p.name,
         p.domain,
+        p.ready_mode_enabled,
         p.created_at,
         p.updated_at,
         (SELECT COUNT(*) FROM subdomains s WHERE s.project_id = p.id) AS subdomains_count,
@@ -1203,7 +1221,7 @@ router.post("/bulk", requireApiUser(), (req, res) => {
 
   const createdProjects = db
     .prepare(`
-      SELECT id, name, domain, created_at, updated_at
+      SELECT id, name, domain, ready_mode_enabled, created_at, updated_at
       FROM projects
       WHERE domain IN (${domains.map(() => "?").join(",")})
       ORDER BY created_at DESC
@@ -1235,7 +1253,7 @@ router.post("/", requireApiUser(), (req, res) => {
   `).run(projectId, name, now, now);
 
   const project = db
-    .prepare("SELECT id, name, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .prepare("SELECT id, name, domain, ready_mode_enabled, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
     .get(projectId);
 
   res.json({
@@ -1257,7 +1275,7 @@ router.get("/:id", requireApiUser(), (req, res) => {
   const { id } = req.params;
 
   const project = db
-    .prepare("SELECT id, name, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .prepare("SELECT id, name, domain, ready_mode_enabled, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
     .get(id);
 
   if (!project) {
@@ -1290,6 +1308,7 @@ router.get("/:id", requireApiUser(), (req, res) => {
   const webarchive = getCachedWebArchive(id);
   const dorkStats = getCachedDorkStats(id);
   const emails = collectProjectEmails(id);
+  const availability = getCachedAvailability(id);
 
   res.json({
     project: mapProjectWithDomains(project, {
@@ -1300,7 +1319,36 @@ router.get("/:id", requireApiUser(), (req, res) => {
       webarchive,
       dorkStats,
       emails,
+      availability,
     }),
+  });
+});
+
+router.put("/:id/ready-mode", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const enabled = Boolean(req.body?.enabled);
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  db.prepare("UPDATE projects SET ready_mode_enabled = ?, updated_at = ? WHERE id = ?").run(enabled ? 1 : 0, nowIso(), id);
+  res.json({ ok: true, readyModeEnabled: enabled });
+});
+
+router.get("/:id/availability", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, ready_mode_enabled FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  res.json({
+    readyModeEnabled: Boolean(project.ready_mode_enabled),
+    result: getCachedAvailability(id),
   });
 });
 
@@ -1308,7 +1356,7 @@ router.post("/:id/domains", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
   const project = db
-    .prepare("SELECT id, name, domain, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
+    .prepare("SELECT id, name, domain, ready_mode_enabled, created_at, updated_at FROM projects WHERE id = ? LIMIT 1")
     .get(id);
 
   if (!project) {
@@ -2796,6 +2844,30 @@ router.post("/:id/asn-task", requireApiUser(), (req, res) => {
     taskKind: "ASN",
   });
   res.json({ ok: true, runId: run.id, taskKind: "ASN" });
+});
+
+router.post("/:id/ready-check-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, ready_mode_enabled FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  if (!project.ready_mode_enabled) {
+    res.status(400).json({ error: "Enable ready project mode before running active availability checks" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "READY_CHECK" });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "READY_CHECK",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "READY_CHECK" });
 });
 
 router.delete("/:id/asn", requireApiUser(), (req, res) => {

@@ -214,6 +214,14 @@ function initSchema(db) {
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS project_availability (
+      project_id TEXT PRIMARY KEY,
+      data_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS project_email_overrides (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -699,6 +707,12 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
     "projects",
     "labor_scope_json",
     "ALTER TABLE projects ADD COLUMN labor_scope_json TEXT",
+  );
+  ensureColumnExists(
+    db,
+    "projects",
+    "ready_mode_enabled",
+    "ALTER TABLE projects ADD COLUMN ready_mode_enabled INTEGER NOT NULL DEFAULT 0 CHECK(ready_mode_enabled IN (0, 1))",
   );
 
   const legacyProjects = db

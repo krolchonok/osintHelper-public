@@ -7,6 +7,7 @@ const { executeIntelxLeaksTask } = require("./intelx-task");
 const { executeWebArchiveTask, executeWebArchiveMetadataTask } = require("./webarchive-task");
 const { executeDorkStatsTask } = require("./dork-stats-task");
 const { executeAsnTask } = require("./asn-task");
+const { executeAvailabilityTask } = require("./availability-task");
 const { clampProgress, createId, nowIso } = require("./utils");
 
 class RunDeletedError extends Error {
@@ -181,6 +182,8 @@ async function executeRun(payload, onQueueProgress) {
       await executeDorkStatsTask(payload.projectId, progressReporter, payload.runId);
     } else if (payload.taskKind === "ASN") {
       await executeAsnTask(payload.projectId, progressReporter);
+    } else if (payload.taskKind === "READY_CHECK") {
+      await executeAvailabilityTask(payload.projectId, progressReporter);
     } else if (payload.type === "ASN_LOOKUP") {
       await executeAsnTask(payload.projectId, progressReporter);
     } else if (payload.type === "PASSIVE_SCAN") {
