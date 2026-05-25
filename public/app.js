@@ -2728,8 +2728,10 @@
                 <div class="row wrap project-panel-toolbar">
                   <button class="btn btn-secondary" id="run-whois-btn" type="button">Распознать WHOIS</button>
                   <button class="btn btn-ghost" id="whois-export-csv-btn" type="button">Экспорт CSV</button>
+                  <button class="btn btn-secondary" id="whois-find-org-domains-btn" type="button" style="display:none">Найти домены организации (Netlas)</button>
                 </div>
                 <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
+                <div id="whois-org-domains-result" style="margin-top:12px; display:none;"></div>
               </div>
               <div class="whois-block" style="margin-top: 20px;">
                 <div class="panel-header">
@@ -2987,6 +2989,8 @@
     const intelxDeleteSelectedBtn = document.getElementById("intelx-delete-selected-btn");
     const intelxExportCsvBtn = document.getElementById("intelx-export-csv-btn");
     const whoisExportCsvBtn = document.getElementById("whois-export-csv-btn");
+    const whoisFindOrgDomainsBtn = document.getElementById("whois-find-org-domains-btn");
+    const whoisOrgDomainsResult = document.getElementById("whois-org-domains-result");
     const runsExportCsvBtn = document.getElementById("runs-export-csv-btn");
 
     function autosizeWhoisField() {
@@ -2997,11 +3001,22 @@
     whoisInfoField.style.overflowY = "hidden";
     whoisInfoField.style.resize = "none";
 
-    if (project.whois) {
+    function updateWhoisUI() {
       whoisInfoField.value = buildWhoisText(project.whois);
       autosizeWhoisField();
+      whoisExportCsvBtn.disabled = !String(whoisInfoField.value || "").trim();
+      
+      if (project.whois && project.whois.registrant && project.whois.registrant !== "-") {
+        whoisFindOrgDomainsBtn.style.display = "inline-flex";
+        whoisFindOrgDomainsBtn.textContent = `Домены: ${project.whois.registrant}`;
+      } else {
+        whoisFindOrgDomainsBtn.style.display = "none";
+      }
     }
-    whoisExportCsvBtn.disabled = !String(whoisInfoField.value || "").trim();
+
+    if (project.whois) {
+      updateWhoisUI();
+    }
 
     function setActionMessage(message, kind) {
       if (!message) {
@@ -3610,13 +3625,57 @@
         if (disposed) {
           return;
         }
-        whoisInfoField.value = buildWhoisText(payloadWhois && payloadWhois.whois);
-        autosizeWhoisField();
-        whoisExportCsvBtn.disabled = !String(whoisInfoField.value || "").trim();
+        project.whois = payloadWhois && payloadWhois.whois;
+        updateWhoisUI();
       } catch {
         // ignore background whois refresh errors
       }
     }
+
+    whoisFindOrgDomainsBtn.addEventListener("click", async () => {
+      const org = project.whois && project.whois.registrant;
+      if (!org || org === "-") return;
+
+      whoisFindOrgDomainsBtn.disabled = true;
+      const originalText = whoisFindOrgDomainsBtn.textContent;
+      whoisFindOrgDomainsBtn.textContent = "Поиск...";
+      whoisOrgDomainsResult.style.display = "none";
+
+      try {
+        const res = await api(`/api/netlas/org-domains?org=${encodeURIComponent(org)}`);
+        const domains = Array.isArray(res.domains) ? res.domains : [];
+
+        if (domains.length === 0) {
+          whoisOrgDomainsResult.innerHTML = '<p class="hint">Домены не найдены.</p>';
+        } else {
+          const links = domains.map(d => `<span class="pill mono" style="margin:2px; cursor:pointer;" data-action="add-scanned-domain" data-domain="${escapeHtml(d)}">${escapeHtml(d)}</span>`).join("");
+          whoisOrgDomainsResult.innerHTML = `
+            <div class="panel" style="padding:12px; background:rgba(255,255,255,0.05)">
+              <div class="hint" style="margin-bottom:8px">Найдено в Netlas: ${domains.length}</div>
+              <div class="row wrap">${links}</div>
+              <p class="hint mt-2" style="font-size:11px">Нажмите на домен, чтобы добавить его в проект.</p>
+            </div>
+          `;
+        }
+        whoisOrgDomainsResult.style.display = "block";
+      } catch (err) {
+        alert(friendlyError(err, "Ошибка поиска в Netlas"));
+      } finally {
+        whoisFindOrgDomainsBtn.disabled = false;
+        whoisFindOrgDomainsBtn.textContent = originalText;
+      }
+    });
+
+    whoisOrgDomainsResult.addEventListener("click", async (e) => {
+      const target = e.target;
+      if (target.dataset.action === "add-scanned-domain") {
+        const domain = target.dataset.domain;
+        if (!domain) return;
+        
+        projectDomainInput.value = domain;
+        projectDomainSubmit.click();
+      }
+    });
 
     async function refreshVtDeepInfo() {
       try {

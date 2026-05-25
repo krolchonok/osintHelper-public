@@ -8,6 +8,7 @@ const { config } = require("./lib/config");
 const { authRouter } = require("./routes/auth");
 const { projectsRouter } = require("./routes/projects");
 const { providersRouter } = require("./routes/providers");
+const { netlasRouter } = require("./routes/netlas");
 const { adminUsersRouter } = require("./routes/admin-users");
 const { startScanWorker } = require("./lib/job-queue");
 const { initAdminBootstrap } = require("./lib/bootstrap");
@@ -107,7 +108,8 @@ app.get("/api/setup/status", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/projects", projectsRouter);
-app.use("/api/settings", providersRouter);
+app.use("/api/netlas", netlasRouter);
+app.use("/api/providers", providersRouter);
 app.use("/api/admin", adminUsersRouter);
 
 app.use((req, res, next) => {
