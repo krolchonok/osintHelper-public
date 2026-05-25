@@ -132,6 +132,22 @@
     return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">${escapeHtml(label || url)}</a>`;
   }
 
+  function shellSingleQuote(value) {
+    return `'${String(value || "").replace(/'/g, "'\\''")}'`;
+  }
+
+  function buildCommandBlock(command, index) {
+    const id = `nmap-command-${index}`;
+    return `
+      <div class="command-block" style="margin-top:8px">
+        <pre class="mono" style="white-space:pre-wrap;margin:0;font-size:12px"><code id="${id}">${escapeHtml(command)}</code></pre>
+        <div class="row row-no-margin" style="margin-top:8px">
+          <button class="btn btn-ghost" type="button" data-action="copy-nmap-command" data-copy-target="${id}">Скопировать</button>
+        </div>
+      </div>
+    `;
+  }
+
   function normalizePath(pathname) {
     if (!pathname) {
       return "/";
@@ -1150,6 +1166,57 @@
     return run.type || "-";
   }
 
+  function buildRunReportMarkup(run) {
+    if (!run || !run.report || !Array.isArray(run.report)) {
+      return "";
+    }
+
+    const sections = run.report.map((domainReport) => {
+      const providers = Array.isArray(domainReport.providers) ? domainReport.providers : [];
+      const rows = providers
+        .map((p) => {
+          const statusClass = p.status >= 200 && p.status < 300 ? "pill-done" : "pill-failed";
+          const errorText = p.error ? ` <span class="hint">(${escapeHtml(p.error)})</span>` : "";
+          const antiBotText = p.antiBot ? ` <span class="pill tiny danger">CAPTCHA</span>` : "";
+          return `
+          <tr>
+            <td>${escapeHtml(p.name)}</td>
+            <td><span class="pill tiny ${statusClass}">${p.status}</span>${antiBotText}${errorText}</td>
+            <td>${p.count}</td>
+          </tr>
+        `;
+        })
+        .join("");
+
+      return `
+        <div class="stack-sm" style="margin-top:16px">
+          <div class="hint mono" style="font-size:12px">${escapeHtml(domainReport.domain)}</div>
+          <div class="table-wrap">
+            <table class="table" style="font-size:13px">
+              <thead>
+                <tr>
+                  <th style="padding:4px 8px">Ресурс</th>
+                  <th style="padding:4px 8px">Статус</th>
+                  <th style="padding:4px 8px">Найдено</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    return `
+      <div class="panel" style="margin-top:24px; padding:16px; background: rgba(0,0,0,0.15)">
+        <div class="panel-header" style="margin-bottom:12px">
+          <h3 style="margin:0; font-size:16px">Отчет по источникам</h3>
+        </div>
+        ${sections}
+      </div>
+    `;
+  }
+
   function buildRunTimelineRows(selectedRun) {
     if (!selectedRun || !Array.isArray(selectedRun.events) || selectedRun.events.length === 0) {
       return [];
@@ -1180,8 +1247,9 @@
     }
 
     const rows = buildRunTimelineRows(selectedRun);
+    const reportHtml = buildRunReportMarkup(selectedRun);
     if (!rows.length) {
-      return '<p class="hint">Событий пока нет.</p>';
+      return '<p class="hint">Событий пока нет.</p>' + reportHtml;
     }
 
     return `
@@ -1190,6 +1258,7 @@
         <p>${escapeHtml(formatRunTypeLabel(selectedRun))} · ${escapeHtml(selectedRun.status)}</p>
       </div>
       <div class="timeline-scroll"><ol class="timeline">${rows.join("")}</ol></div>
+      ${reportHtml}
     `;
   }
 
@@ -1961,6 +2030,107 @@
     `;
   }
 
+  function buildNmapPanel(project, projectDomains) {
+    const domains = Array.from(new Set((projectDomains || []).map((item) => String(item || "").trim()).filter(Boolean)));
+    const fallbackDomain = project && (project.primaryDomain || project.domain) ? String(project.primaryDomain || project.domain) : "example.com";
+    const targetLines = domains.length ? domains : [fallbackDomain];
+    const stem = getProjectFileStem(project);
+    const csvName = `${stem}-domain-ip.csv`;
+    const setupCommand = [
+      `PROJECT=${shellSingleQuote(stem)}`,
+      'OUTDIR="nmap-${PROJECT}-$(date +%Y%m%d-%H%M%S)"',
+      'TARGETS="$OUTDIR/targets.txt"',
+      'mkdir -p "$OUTDIR"',
+      'cat > "$TARGETS" <<\'EOF\'',
+      ...targetLines,
+      "EOF",
+      'printf "Targets: %s\\nResults: %s\\n" "$TARGETS" "$OUTDIR"',
+    ].join("\n");
+    const csvImportCommand = [
+      `PROJECT=${shellSingleQuote(stem)}`,
+      `CSV=${shellSingleQuote(csvName)}`,
+      'OUTDIR="nmap-${PROJECT}-$(date +%Y%m%d-%H%M%S)"',
+      'TARGETS="$OUTDIR/targets.txt"',
+      'mkdir -p "$OUTDIR"',
+      'awk -F\';\' \'NR > 1 && $1 {print $1}\' "$CSV" | sort -u > "$TARGETS"',
+      'printf "Targets from CSV: %s\\nResults: %s\\n" "$TARGETS" "$OUTDIR"',
+    ].join("\n");
+
+    const scenarios = [
+      {
+        title: "0. Подготовить targets из доменов проекта",
+        note: "Создаёт папку результатов и файл целей. Выполните этот блок первым, затем запускайте сценарии ниже в той же shell-сессии.",
+        command: setupCommand,
+      },
+      {
+        title: "0b. Подготовить targets из CSV domain;ip",
+        note: `Сначала скачайте CSV через кнопку "Экспорт CSV domain;ip" и положите файл рядом с терминалом как ${csvName}.`,
+        command: csvImportCommand,
+      },
+      {
+        title: "1. Быстрая проверка живых хостов",
+        note: "Низкий шум. Полезно понять, какие цели отвечают на ICMP/ARP/TCP discovery. Результаты: 01-discovery.*",
+        command: 'nmap -sn -oA "$OUTDIR/01-discovery" -iL "$TARGETS"',
+      },
+      {
+        title: "2. Быстрый TCP top ports",
+        note: "Практичный первый проход по самым частым портам без DNS-резолва. Сохраняет только открытые порты.",
+        command: 'nmap -Pn -n --top-ports 100 --open -oA "$OUTDIR/02-top100-tcp" -iL "$TARGETS"',
+      },
+      {
+        title: "3. Web-порты и базовые HTTP/TLS сведения",
+        note: "Ищет web-поверхность, заголовки, title и сертификаты.",
+        command: 'nmap -Pn -n -sV -p 80,443,8000,8080,8081,8443,8888 --open --script http-title,http-server-header,ssl-cert -oA "$OUTDIR/03-web" -iL "$TARGETS"',
+      },
+      {
+        title: "4. Полный TCP sweep",
+        note: "Более шумный сценарий. Лучше запускать после согласования окна работ. Требует sudo для SYN scan.",
+        command: 'sudo nmap -Pn -n -sS -p- --min-rate 3000 --open -oA "$OUTDIR/04-full-tcp" -iL "$TARGETS"',
+      },
+      {
+        title: "5. Версии, default scripts и OS guess",
+        note: "Детализация найденной поверхности. При необходимости замените список портов на результаты полного TCP.",
+        command: 'sudo nmap -Pn -n -sV --version-all -sC -O --osscan-guess --open -oA "$OUTDIR/05-service-detail" -iL "$TARGETS"',
+      },
+      {
+        title: "6. Safe vuln NSE по открытым сервисам",
+        note: "Осторожный vuln-проход. Всё равно активный скан: запускать только в разрешённом контуре.",
+        command: 'nmap -Pn -n -sV --script "safe and vuln" --open -oA "$OUTDIR/06-safe-vuln" -iL "$TARGETS"',
+      },
+      {
+        title: "7. UDP top 50",
+        note: "Медленнее и шумнее TCP. Хорош для DNS/NTP/SNMP/VPN-гипотез. Требует sudo.",
+        command: 'sudo nmap -Pn -n -sU --top-ports 50 --defeat-icmp-ratelimit -oA "$OUTDIR/07-udp-top50" -iL "$TARGETS"',
+      },
+      {
+        title: "8. TLS ciphers/certificates",
+        note: "Фокус на HTTPS/TLS конфигурации.",
+        command: 'nmap -Pn -n -sV -p 443,8443,9443 --script ssl-enum-ciphers,ssl-cert -oA "$OUTDIR/08-tls" -iL "$TARGETS"',
+      },
+      {
+        title: "9. Быстрый отчёт по открытым портам",
+        note: "Сводка из gnmap-файлов после запусков.",
+        command: 'grep -h "Ports:" "$OUTDIR"/*.gnmap | sed "s/.*Ports: //" | tr "," "\\n" | sed "s/^ *//" | sort -u | tee "$OUTDIR/open-ports-summary.txt"',
+      },
+    ];
+
+    return `
+      <div class="stack-md project-data-toolbar-stack">
+        <div class="hint">Команды рассчитаны на авторизованный pentest: сначала подготовьте <span class="mono">TARGETS</span>, затем запускайте нужные сценарии. Все результаты сохраняются в <span class="mono">$OUTDIR</span> через <span class="mono">-oA</span>.</div>
+      </div>
+      <div id="nmap-action-message"></div>
+      ${scenarios.map((scenario, index) => `
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+          <div class="panel-header">
+            <h3>${escapeHtml(scenario.title)}</h3>
+            <p>${escapeHtml(scenario.note)}</p>
+          </div>
+          ${buildCommandBlock(scenario.command, index)}
+        </div>
+      `).join("")}
+    `;
+  }
+
   function renderLaborCalc(asnData, laborScope, laborSettings, subdomainsTotal) {
     const norms = laborSettings || { recon: 8, infraVuln: 16, softwareVuln: 24 };
     const asns = asnData && Array.isArray(asnData.asns) ? asnData.asns : [];
@@ -2510,6 +2680,7 @@
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
               <button class="btn btn-ghost" id="tab-asn-btn" type="button">ASN</button>
               <button class="btn btn-ghost" id="tab-ready-btn" type="button">Готовность</button>
+              <button class="btn btn-ghost" id="tab-nmap-btn" type="button">Nmap</button>
               <button class="btn btn-ghost" id="tab-labor-btn" type="button">Трудозатраты</button>
             </div>
             <div id="subdomains-panel" class="project-data-panel">
@@ -2690,6 +2861,9 @@
               <div id="ready-action-message"></div>
               <div id="ready-table-root"></div>
             </div>
+            <div id="nmap-panel" class="project-data-panel" hidden>
+              ${buildNmapPanel(project, projectDomains)}
+            </div>
           </section>
 
           <section class="panel">
@@ -2745,6 +2919,7 @@
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const tabAsnBtn = document.getElementById("tab-asn-btn");
     const tabReadyBtn = document.getElementById("tab-ready-btn");
+    const tabNmapBtn = document.getElementById("tab-nmap-btn");
     const tabLaborBtn = document.getElementById("tab-labor-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
@@ -2755,6 +2930,7 @@
     const intelxPanel = document.getElementById("intelx-panel");
     const asnPanel = document.getElementById("asn-panel");
     const readyPanel = document.getElementById("ready-panel");
+    const nmapPanel = document.getElementById("nmap-panel");
     const laborPanel = document.getElementById("labor-panel");
     const laborPanelRoot = document.getElementById("labor-panel-root");
     const asnActionMessageEl = document.getElementById("asn-action-message");
@@ -2915,6 +3091,7 @@
       const showIntelx = activeDataTab === "intelx";
       const showAsn = activeDataTab === "asn";
       const showReady = activeDataTab === "ready";
+      const showNmap = activeDataTab === "nmap";
       const showLabor = activeDataTab === "labor";
       subdomainsPanel.hidden = !showSubdomains;
       whoisPanel.hidden = !showWhois;
@@ -2925,6 +3102,7 @@
       intelxPanel.hidden = !showIntelx;
       asnPanel.hidden = !showAsn;
       readyPanel.hidden = !showReady;
+      nmapPanel.hidden = !showNmap;
       laborPanel.hidden = !showLabor;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
@@ -2935,6 +3113,7 @@
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
       tabAsnBtn.className = showAsn ? "btn btn-primary" : "btn btn-ghost";
       tabReadyBtn.className = showReady ? "btn btn-primary" : "btn btn-ghost";
+      tabNmapBtn.className = showNmap ? "btn btn-primary" : "btn btn-ghost";
       tabLaborBtn.className = showLabor ? "btn btn-primary" : "btn btn-ghost";
     }
 
@@ -3054,6 +3233,7 @@
         <div class="timeline-scroll clusterize-scroll">
           <ol class="timeline clusterize-content"></ol>
         </div>
+        ${buildRunReportMarkup(selectedRun)}
       `;
 
       const rows = buildRunTimelineRows(selectedRun);
@@ -3351,6 +3531,8 @@
         renderAsn();
       } else if (activeDataTab === "ready") {
         renderReady();
+      } else if (activeDataTab === "nmap") {
+        // Static command panel.
       } else if (activeDataTab === "labor") {
         renderLabor();
       }
@@ -4534,10 +4716,34 @@
       void refreshAvailabilityInfo();
     });
 
+    tabNmapBtn.addEventListener("click", () => {
+      activeDataTab = "nmap";
+      renderDataTab();
+    });
+
     tabLaborBtn.addEventListener("click", () => {
       activeDataTab = "labor";
       renderDataTab();
       void refreshLaborInfo();
+    });
+
+    nmapPanel.addEventListener("click", async (event) => {
+      const copyButton = closestAction(event.target, "copy-nmap-command");
+      if (!copyButton || !nmapPanel.contains(copyButton)) {
+        return;
+      }
+      const targetId = copyButton.getAttribute("data-copy-target");
+      const codeEl = targetId ? document.getElementById(targetId) : null;
+      const text = codeEl ? String(codeEl.textContent || "") : "";
+      if (!text.trim()) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        showPopup("Команда Nmap скопирована", "success");
+      } catch {
+        showPopup("Не удалось скопировать команду", "error");
+      }
     });
 
     readyModeToggle.addEventListener("change", async () => {

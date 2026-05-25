@@ -168,33 +168,34 @@ async function executeRun(payload, onQueueProgress) {
   };
 
   try {
+    let result = null;
     if (payload.taskKind === "WHOIS") {
-      await executeWhoisTask(payload.projectId, progressReporter);
+      result = await executeWhoisTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "VT_DEEP") {
-      await executeVtDeepTask(payload.projectId, progressReporter);
+      result = await executeVtDeepTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "WEBARCHIVE") {
-      await executeWebArchiveTask(payload.projectId, progressReporter);
+      result = await executeWebArchiveTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "WEBARCHIVE_METADATA") {
-      await executeWebArchiveMetadataTask(payload.projectId, progressReporter);
+      result = await executeWebArchiveMetadataTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "INTELX_LEAKS") {
-      await executeIntelxLeaksTask(payload.projectId, progressReporter, payload.taskPayload || null);
+      result = await executeIntelxLeaksTask(payload.projectId, progressReporter, payload.taskPayload || null);
     } else if (payload.taskKind === "DORK_STATS") {
-      await executeDorkStatsTask(payload.projectId, progressReporter, payload.runId);
+      result = await executeDorkStatsTask(payload.projectId, progressReporter, payload.runId);
     } else if (payload.taskKind === "ASN") {
-      await executeAsnTask(payload.projectId, progressReporter);
+      result = await executeAsnTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "READY_CHECK") {
-      await executeAvailabilityTask(payload.projectId, progressReporter);
+      result = await executeAvailabilityTask(payload.projectId, progressReporter);
     } else if (payload.type === "ASN_LOOKUP") {
-      await executeAsnTask(payload.projectId, progressReporter);
+      result = await executeAsnTask(payload.projectId, progressReporter);
     } else if (payload.type === "PASSIVE_SCAN") {
-      await executePassiveScan(
+      result = await executePassiveScan(
         payload.projectId,
         progressReporter,
         payload.scanScope || "core",
         payload.taskPayload || null,
       );
     } else {
-      await executeDnsResolve(payload.projectId, progressReporter, payload.scanScope || "core", payload.taskPayload || null);
+      result = await executeDnsResolve(payload.projectId, progressReporter, payload.scanScope || "core", payload.taskPayload || null);
     }
 
     if (isCancelRequested(payload.runId)) {
@@ -203,9 +204,9 @@ async function executeRun(payload, onQueueProgress) {
 
     const successResult = db.prepare(`
       UPDATE scan_runs
-      SET status = 'SUCCESS', finished_at = ?, progress = 100, stage = 'Completed'
+      SET status = 'SUCCESS', finished_at = ?, progress = 100, stage = 'Completed', report_json = ?
       WHERE id = ?
-    `).run(nowIso(), payload.runId);
+    `).run(nowIso(), result?.report ? JSON.stringify(result.report) : null, payload.runId);
 
     if (successResult.changes === 0) {
       return;

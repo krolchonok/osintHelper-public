@@ -334,6 +334,15 @@ async function fetchDomainWhois(domain) {
 }
 
 function mapRun(row) {
+  let report = null;
+  if (row.report_json) {
+    try {
+      report = JSON.parse(row.report_json);
+    } catch {
+      report = null;
+    }
+  }
+
   return {
     id: row.id,
     projectId: row.project_id,
@@ -349,6 +358,7 @@ function mapRun(row) {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     error: row.error,
+    report,
     createdAt: row.created_at,
   };
 }
@@ -1148,7 +1158,7 @@ router.get("/", requireApiUser(), (_req, res) => {
     .all();
 
   const selectRun = db.prepare(`
-    SELECT id, type, scan_scope, status, created_at
+    SELECT id, type, scan_scope, status, report_json, created_at
     FROM scan_runs
     WHERE id = ?
     LIMIT 1
@@ -1167,6 +1177,7 @@ router.get("/", requireApiUser(), (_req, res) => {
             type: lastRun.type,
             scanScope: lastRun.scan_scope || "core",
             status: lastRun.status,
+            report: lastRun.report_json ? JSON.parse(lastRun.report_json) : null,
             createdAt: lastRun.created_at,
           }
         : null,
@@ -1291,7 +1302,7 @@ router.get("/:id", requireApiUser(), (req, res) => {
 
   const runs = db
     .prepare(`
-      SELECT id, project_id, type, task_kind, scan_scope, cancel_requested, status, progress, stage, processed, total, started_at, finished_at, error, created_at
+      SELECT id, project_id, type, task_kind, scan_scope, cancel_requested, status, progress, stage, processed, total, started_at, finished_at, error, report_json, created_at
       FROM scan_runs
       WHERE project_id = ?
       ORDER BY created_at DESC
@@ -1417,7 +1428,7 @@ router.get("/:id/runs", requireApiUser(), (req, res) => {
 
   const runs = db
     .prepare(`
-      SELECT id, project_id, type, task_kind, scan_scope, cancel_requested, status, progress, stage, processed, total, started_at, finished_at, error, created_at
+      SELECT id, project_id, type, task_kind, scan_scope, cancel_requested, status, progress, stage, processed, total, started_at, finished_at, error, report_json, created_at
       FROM scan_runs
       WHERE project_id = ?
       ORDER BY created_at DESC

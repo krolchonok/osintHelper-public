@@ -90,6 +90,7 @@ function initSchema(db) {
       started_at TEXT,
       finished_at TEXT,
       error TEXT,
+      report_json TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
@@ -701,6 +702,12 @@ function openDatabase(rawPath = process.env.SQLITE_PATH) {
     "scan_jobs",
     "task_payload",
     "ALTER TABLE scan_jobs ADD COLUMN task_payload TEXT",
+  );
+  ensureColumnExists(
+    db,
+    "scan_runs",
+    "report_json",
+    "ALTER TABLE scan_runs ADD COLUMN report_json TEXT",
   );
   ensureColumnExists(
     db,

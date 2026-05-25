@@ -343,7 +343,9 @@ async function requestText(url, options = {}) {
         elapsedMs: Date.now() - startedAt,
       });
       loggedHttpError = true;
-      throw new Error(`HTTP ${response.status}`);
+      const error = new Error(`HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
 
     const text = await response.text();
@@ -356,7 +358,10 @@ async function requestText(url, options = {}) {
         elapsedMs: Date.now() - startedAt,
         error: "anti_bot_challenge",
       });
-      throw new Error("Anti-bot challenge page");
+      const error = new Error("Anti-bot challenge page");
+      error.status = response.status;
+      error.antiBot = true;
+      throw error;
     }
 
     return text;
@@ -1224,17 +1229,35 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
     totalSources,
   );
 
-  let completedSources = 0;
+  const sourceReports = [];
   const sourceResults = await mapWithConcurrency(
     filteredSources,
     sourceConcurrency,
     async (source) => {
+      let status = 200;
+      let count = 0;
+      let error = null;
+      let antiBot = false;
+      let results = [];
+
       try {
-        const result = await source.fetcher(domain);
-        return Array.isArray(result) ? result : [];
-      } catch {
-        return [];
+        const res = await source.fetcher(domain);
+        results = Array.isArray(res) ? res : [];
+        count = results.length;
+      } catch (err) {
+        status = err.status || 500;
+        error = err.message;
+        antiBot = Boolean(err.antiBot);
+        results = [];
       } finally {
+        sourceReports.push({
+          name: source.name,
+          status,
+          count,
+          error,
+          antiBot,
+        });
+
         completedSources += 1;
         const progress = Math.round(16 + (completedSources / totalSources) * 36);
         await emit(
@@ -1245,10 +1268,14 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
           totalSources,
         );
       }
+      return results;
     },
   );
 
-  return mergeResults(sourceResults);
+  return {
+    results: mergeResults(sourceResults),
+    report: sourceReports,
+  };
 }
 
 async function executePassiveScan(projectId, onProgress, scanScope = "core", options = null) {
@@ -1298,10 +1325,13 @@ async function executePassiveScan(projectId, onProgress, scanScope = "core", opt
   const isFullyPassive = scanScope === "fullypassive";
   const webScope = isFullyPassive ? "all" : scanScope;
   const results = [];
+  const reports = [];
   for (let index = 0; index < domains.length; index += 1) {
     const domain = domains[index];
     await emit(onProgress, 8, `Preparing passive scan for ${domain} (${index + 1}/${domains.length})`);
-    results.push(await runWebPassiveScan(domain, onProgress, webScope));
+    const payload = await runWebPassiveScan(domain, onProgress, webScope);
+    results.push(payload.results);
+    reports.push({ domain, providers: payload.report });
   }
   const mergedResults = mergeResults(results);
 
@@ -1343,7 +1373,7 @@ async function executePassiveScan(projectId, onProgress, scanScope = "core", opt
   }
 
   await emit(onProgress, 98, "Passive scan completed", filtered.length, filtered.length);
-  return { found: filtered.length };
+  return { found: filtered.length, report: reports };
 }
 
 module.exports = {
