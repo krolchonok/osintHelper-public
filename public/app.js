@@ -2129,6 +2129,11 @@
 
     return `
       <div class="stack-md project-data-toolbar-stack">
+        <div class="row wrap project-panel-toolbar">
+          <button class="btn btn-secondary" id="nmap-export-asns-btn" type="button">Выгрузить выбранные ASN (txt)</button>
+          <button class="btn btn-secondary" id="nmap-export-ips-btn" type="button">Выгрузить все IP поддоменов (txt)</button>
+          <button class="btn btn-secondary" id="nmap-export-subdomains-btn" type="button">Выгрузить все поддомены (txt)</button>
+        </div>
         <div class="hint">Команды рассчитаны на авторизованный pentest: сначала подготовьте <span class="mono">TARGETS</span>, затем запускайте нужные сценарии. Все результаты сохраняются в <span class="mono">$OUTDIR</span> через <span class="mono">-oA</span>.</div>
       </div>
       <div id="nmap-action-message"></div>
@@ -2913,6 +2918,9 @@
     const runResolveFastBtn = document.getElementById("run-resolve-fast-btn");
     const runResolveExtendedBtn = document.getElementById("run-resolve-extended-btn");
     const exportDomainIpCsvBtn = document.getElementById("export-domain-ip-csv-btn");
+    const nmapExportAsnsBtn = document.getElementById("nmap-export-asns-btn");
+    const nmapExportIpsBtn = document.getElementById("nmap-export-ips-btn");
+    const nmapExportSubdomainsBtn = document.getElementById("nmap-export-subdomains-btn");
     const subdomainsExportTableCsvBtn = document.getElementById("subdomains-export-table-csv-btn");
     const exportAllBtn = document.getElementById("export-all-btn");
     const exportAllMessageEl = document.getElementById("export-all-message");
@@ -5216,6 +5224,75 @@
         "DNS-резолв поставлен в очередь (расширенный)",
         { scope: "extended" },
       );
+    });
+
+    function downloadTextFile(text, filename) {
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    nmapExportAsnsBtn.addEventListener("click", () => {
+      if (!asnData || !Array.isArray(asnData.asns)) {
+        showPopup("Данные ASN не загружены", "error");
+        return;
+      }
+      const zones = asnData.asns.filter((entry) => selectedAsnZones.has(String(entry.asn || "").trim()));
+      const targets = [];
+      for (const zone of zones) {
+        if (Array.isArray(zone.cidrs)) targets.push(...zone.cidrs);
+        if (Array.isArray(zone.ips)) targets.push(...zone.ips);
+      }
+      const uniqueTargets = Array.from(new Set(targets.filter(Boolean)));
+      if (!uniqueTargets.length) {
+        showPopup("Нет CIDR/IP для выбранных ASN", "error");
+        return;
+      }
+      downloadTextFile(uniqueTargets.join("\n"), `${getProjectFileStem(project)}-nmap-asns.txt`);
+    });
+
+    nmapExportIpsBtn.addEventListener("click", async () => {
+      nmapExportIpsBtn.disabled = true;
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/export/ips.txt`, {
+          method: "GET",
+          credentials: "same-origin",
+        });
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        const text = await response.text();
+        const disposition = response.headers.get("content-disposition") || "";
+        const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
+        const fileName = fileNameMatch ? fileNameMatch[1] : `${getProjectFileStem(project)}-ips.txt`;
+        downloadTextFile(text, fileName);
+      } catch (error) {
+        showPopup(friendlyError(error, "Не удалось экспортировать IP"), "error");
+      } finally {
+        nmapExportIpsBtn.disabled = false;
+      }
+    });
+
+    nmapExportSubdomainsBtn.addEventListener("click", async () => {
+      nmapExportSubdomainsBtn.disabled = true;
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/export/subdomains.txt`, {
+          method: "GET",
+          credentials: "same-origin",
+        });
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        const text = await response.text();
+        const disposition = response.headers.get("content-disposition") || "";
+        const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
+        const fileName = fileNameMatch ? fileNameMatch[1] : `${getProjectFileStem(project)}-subdomains.txt`;
+        downloadTextFile(text, fileName);
+      } catch (error) {
+        showPopup(friendlyError(error, "Не удалось экспортировать поддомены"), "error");
+      } finally {
+        nmapExportSubdomainsBtn.disabled = false;
+      }
     });
 
     exportDomainIpCsvBtn.addEventListener("click", async () => {

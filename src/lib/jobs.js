@@ -7,6 +7,7 @@ const { executeIntelxLeaksTask } = require("./intelx-task");
 const { executeWebArchiveTask, executeWebArchiveMetadataTask } = require("./webarchive-task");
 const { executeDorkStatsTask } = require("./dork-stats-task");
 const { executeAsnTask } = require("./asn-task");
+const { executeNetlasDnsTask } = require("./netlas-dns-task");
 const { executeAvailabilityTask } = require("./availability-task");
 const { clampProgress, createId, nowIso } = require("./utils");
 
@@ -183,6 +184,8 @@ async function executeRun(payload, onQueueProgress) {
       result = await executeDorkStatsTask(payload.projectId, progressReporter, payload.runId);
     } else if (payload.taskKind === "ASN") {
       result = await executeAsnTask(payload.projectId, progressReporter);
+    } else if (payload.taskKind === "NETLAS_DNS") {
+      result = await executeNetlasDnsTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "READY_CHECK") {
       result = await executeAvailabilityTask(payload.projectId, progressReporter);
     } else if (payload.type === "ASN_LOOKUP") {

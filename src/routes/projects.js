@@ -1520,6 +1520,50 @@ router.get("/:id/export/domain-ip.csv", requireApiUser(), (req, res) => {
   res.send(lines.join("\n"));
 });
 
+router.get("/:id/export/subdomains.txt", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rows = db.prepare("SELECT host FROM subdomains WHERE project_id = ? ORDER BY host ASC").all(id);
+  const hosts = Array.from(new Set(rows.map(r => String(r.host || "").trim()).filter(Boolean)));
+
+  const fileName = `${buildProjectFileStem(project)}-subdomains.txt`;
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.send(hosts.join("\n"));
+});
+
+router.get("/:id/export/ips.txt", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id, name, domain FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rows = db.prepare(`
+    SELECT DISTINCT value
+    FROM dns_records
+    WHERE project_id = ?
+      AND record_type IN ('A', 'AAAA')
+      AND value IS NOT NULL
+      AND TRIM(value) <> ''
+    ORDER BY value ASC
+  `).all(id);
+  const ips = rows.map(r => String(r.value || "").trim()).filter(Boolean);
+
+  const fileName = `${buildProjectFileStem(project)}-ips.txt`;
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.send(ips.join("\n"));
+});
+
 router.post("/:id/export/domain-ip-selected.csv", requireApiUser(), (req, res) => {
   const { db } = getDbState();
   const { id } = req.params;
