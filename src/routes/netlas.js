@@ -3,7 +3,8 @@ const { requireApiUser } = require("../lib/auth");
 
 const router = express.Router();
 
-async function netlasDiscoveryProxy(nodeType, nodeValue, fieldId) {
+// Returns flat array of all aggregation entries from the Netlas discovery response
+async function netlasDiscoveryProxy(nodeType, nodeValue) {
   const headers = {
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -12,14 +13,13 @@ async function netlasDiscoveryProxy(nodeType, nodeValue, fieldId) {
     "Referer": "https://app.netlas.io/"
   };
 
-  // Step 1: Get node_count and X-Count-Id
+  // node_count returns the full result directly as an array of { aggregations: [...] }
   const countRes = await fetch("https://app.netlas.io/api/discovery/node_count/", {
     method: "POST",
     headers,
     body: JSON.stringify({
       node_type: nodeType,
-      node_value: nodeValue,
-      search_field_id: fieldId
+      node_value: nodeValue
     })
   });
 
@@ -27,30 +27,13 @@ async function netlasDiscoveryProxy(nodeType, nodeValue, fieldId) {
     throw new Error(`Netlas node_count failed with status ${countRes.status}`);
   }
 
-  const countId = countRes.headers.get("x-count-id");
-  if (!countId) {
-    throw new Error("Netlas failed to return x-count-id");
-  }
+  const data = await countRes.json();
 
-  // Step 2: Get actual results using node_result and x-count-id
-  const resultRes = await fetch("https://app.netlas.io/api/discovery/node_result/", {
-    method: "POST",
-    headers: {
-      ...headers,
-      "X-Count-Id": countId
-    },
-    body: JSON.stringify({
-      node_type: nodeType,
-      node_value: nodeValue,
-      search_field_id: fieldId
-    })
-  });
+  // Response is an array of groups, each with its own aggregations array — flatten them all
+  const groups = Array.isArray(data) ? data : [data];
+  const allAggregations = groups.flatMap(group => Array.isArray(group.aggregations) ? group.aggregations : []);
 
-  if (!resultRes.ok) {
-    throw new Error(`Netlas node_result failed with status ${resultRes.status}`);
-  }
-
-  return await resultRes.json();
+  return allAggregations;
 }
 
 router.get("/org-domains", requireApiUser(), async (req, res) => {
@@ -61,17 +44,15 @@ router.get("/org-domains", requireApiUser(), async (req, res) => {
 
   try {
     // search_field_id 80 is "Domain with same organization (Domain WHOIS)"
-    // node_type "organization"
-    const data = await netlasDiscoveryProxy("organization", org, 80);
-    
-    // Extract domains from aggregations
-    const domains = (data.aggregations || [])
-      .filter(item => item.node_type === "domain")
-      .map(item => item.node_value);
+    const aggregations = await netlasDiscoveryProxy("organization", org);
+
+    // Find the domain aggregation entry (search_field_id 80) and extract preview domains
+    const domainEntry = aggregations.find(item => item.search_field_id === 80);
+    const domains = Array.isArray(domainEntry?.preview) ? domainEntry.preview : [];
 
     res.json({ domains });
   } catch (err) {
-    console.error("[netlas-proxy] error:", err);
+    console.error("[netlas-proxy] org-domains error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -83,25 +64,19 @@ router.get("/domain-dns-records", requireApiUser(), async (req, res) => {
   }
 
   try {
-    // 32: TXT records for domain
-    // 31: Mailservers for domain (MX)
-    // 30: NS servers for domain
-    // 29: A records for domain
-    const fieldIds = [32, 31, 30, 29];
-    const results = {};
+    // Fetch all aggregations for the domain in one request
+    const aggregations = await netlasDiscoveryProxy("domain", domain);
 
-    for (const fieldId of fieldIds) {
-      const data = await netlasDiscoveryProxy("domain", domain, fieldId);
-      const values = (data.aggregations || [])
-        .map(item => item.node_value);
-      
-      let key = "unknown";
-      if (fieldId === 32) key = "TXT";
-      else if (fieldId === 31) key = "MX";
-      else if (fieldId === 30) key = "NS";
-      else if (fieldId === 29) key = "A";
+    // search_field_id mappings:
+    // 32: TXT, 31: MX, 30: NS, 29: A
+    const fieldMap = { 32: "TXT", 31: "MX", 30: "NS", 29: "A" };
+    const results = { TXT: [], MX: [], NS: [], A: [] };
 
-      results[key] = values;
+    for (const entry of aggregations) {
+      const key = fieldMap[entry.search_field_id];
+      if (key && Array.isArray(entry.preview)) {
+        results[key] = entry.preview;
+      }
     }
 
     res.json({ domain, records: results });
