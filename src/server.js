@@ -109,7 +109,7 @@ app.get("/api/setup/status", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/netlas", netlasRouter);
-app.use("/api/providers", providersRouter);
+app.use("/api/settings", providersRouter);
 app.use("/api/admin", adminUsersRouter);
 
 app.use((req, res, next) => {
