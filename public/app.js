@@ -5226,16 +5226,6 @@
       );
     });
 
-    function downloadTextFile(text, filename) {
-      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-
     nmapExportAsnsBtn.addEventListener("click", () => {
       if (!asnData || !Array.isArray(asnData.asns)) {
         showPopup("Данные ASN не загружены", "error");
@@ -5252,7 +5242,7 @@
         showPopup("Нет CIDR/IP для выбранных ASN", "error");
         return;
       }
-      downloadTextFile(uniqueTargets.join("\n"), `${getProjectFileStem(project)}-nmap-asns.txt`);
+      downloadTextFile(`${getProjectFileStem(project)}-nmap-asns.txt`, uniqueTargets.join("\n"));
     });
 
     nmapExportIpsBtn.addEventListener("click", async () => {
@@ -5267,7 +5257,7 @@
         const disposition = response.headers.get("content-disposition") || "";
         const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
         const fileName = fileNameMatch ? fileNameMatch[1] : `${getProjectFileStem(project)}-ips.txt`;
-        downloadTextFile(text, fileName);
+        downloadTextFile(fileName, text);
       } catch (error) {
         showPopup(friendlyError(error, "Не удалось экспортировать IP"), "error");
       } finally {
@@ -5287,7 +5277,7 @@
         const disposition = response.headers.get("content-disposition") || "";
         const fileNameMatch = disposition.match(/filename="([^"]+)"/i);
         const fileName = fileNameMatch ? fileNameMatch[1] : `${getProjectFileStem(project)}-subdomains.txt`;
-        downloadTextFile(text, fileName);
+        downloadTextFile(fileName, text);
       } catch (error) {
         showPopup(friendlyError(error, "Не удалось экспортировать поддомены"), "error");
       } finally {
