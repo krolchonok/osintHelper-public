@@ -2680,6 +2680,21 @@
             </div>
             <div id="project-action-message"></div>
           </section>
+
+          <details class="panel" style="margin-top: 15px;" open>
+            <summary style="cursor: pointer; font-weight: bold; font-size: 1.1rem; padding: 10px 15px; user-select: none;">
+              Готовый проект
+            </summary>
+            <div style="padding: 15px; display: flex; flex-direction: column; gap: 20px;">
+              <div id="nmap-panel" class="project-data-panel">
+                ${buildNmapPanel(project, projectDomains)}
+              </div>
+              <div id="labor-panel" class="project-data-panel" style="border-top: 1px solid var(--border); padding-top: 15px;">
+                <h3 style="margin-top: 0; margin-bottom: 10px;">Трудозатраты</h3>
+                <div id="labor-panel-root"></div>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div class="project-column project-column-right">
@@ -2698,8 +2713,6 @@
               <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
               <button class="btn btn-ghost" id="tab-asn-btn" type="button">ASN</button>
               <button class="btn btn-ghost" id="tab-ready-btn" type="button">Готовность</button>
-              <button class="btn btn-ghost" id="tab-nmap-btn" type="button">Nmap</button>
-              <button class="btn btn-ghost" id="tab-labor-btn" type="button">Трудозатраты</button>
               <button class="btn btn-ghost" id="tab-ip-overlaps-btn" type="button">Совпадения по IP</button>
             </div>
             <div id="subdomains-panel" class="project-data-panel">
@@ -2866,9 +2879,6 @@
               <div id="asn-action-message"></div>
               <div id="asn-table-root"></div>
             </div>
-            <div id="labor-panel" class="project-data-panel" hidden>
-              <div id="labor-panel-root"></div>
-            </div>
             <div id="ready-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
                 <div class="row wrap project-panel-toolbar">
@@ -2883,9 +2893,6 @@
               </div>
               <div id="ready-action-message"></div>
               <div id="ready-table-root"></div>
-            </div>
-            <div id="nmap-panel" class="project-data-panel" hidden>
-              ${buildNmapPanel(project, projectDomains)}
             </div>
             <div id="ip-overlaps-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
@@ -2954,8 +2961,6 @@
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const tabAsnBtn = document.getElementById("tab-asn-btn");
-    const tabNmapBtn = document.getElementById("tab-nmap-btn");
-    const tabLaborBtn = document.getElementById("tab-labor-btn");
     const tabIpOverlapsBtn = document.getElementById("tab-ip-overlaps-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
@@ -3146,8 +3151,6 @@
       const showIntelx = activeDataTab === "intelx";
       const showAsn = activeDataTab === "asn";
       const showReady = activeDataTab === "ready";
-      const showNmap = activeDataTab === "nmap";
-      const showLabor = activeDataTab === "labor";
       const showIpOverlaps = activeDataTab === "ip-overlaps";
       subdomainsPanel.hidden = !showSubdomains;
       whoisPanel.hidden = !showWhois;
@@ -3158,8 +3161,6 @@
       intelxPanel.hidden = !showIntelx;
       asnPanel.hidden = !showAsn;
       readyPanel.hidden = !showReady;
-      nmapPanel.hidden = !showNmap;
-      laborPanel.hidden = !showLabor;
       ipOverlapsPanel.hidden = !showIpOverlaps;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
@@ -3170,8 +3171,6 @@
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
       tabAsnBtn.className = showAsn ? "btn btn-primary" : "btn btn-ghost";
       tabReadyBtn.className = showReady ? "btn btn-primary" : "btn btn-ghost";
-      tabNmapBtn.className = showNmap ? "btn btn-primary" : "btn btn-ghost";
-      tabLaborBtn.className = showLabor ? "btn btn-primary" : "btn btn-ghost";
       tabIpOverlapsBtn.className = showIpOverlaps ? "btn btn-primary" : "btn btn-ghost";
     }
 
@@ -3644,10 +3643,6 @@
         renderAsn();
       } else if (activeDataTab === "ready") {
         renderReady();
-      } else if (activeDataTab === "nmap") {
-        // Static command panel.
-      } else if (activeDataTab === "labor") {
-        renderLabor();
       } else if (activeDataTab === "ip-overlaps") {
         renderIpOverlaps();
       }
@@ -4922,17 +4917,6 @@
       void refreshAvailabilityInfo();
     });
 
-    tabNmapBtn.addEventListener("click", () => {
-      activeDataTab = "nmap";
-      renderDataTab();
-    });
-
-    tabLaborBtn.addEventListener("click", () => {
-      activeDataTab = "labor";
-      renderDataTab();
-      void refreshLaborInfo();
-    });
-
     tabIpOverlapsBtn.addEventListener("click", () => {
       activeDataTab = "ip-overlaps";
       renderDataTab();
@@ -5693,6 +5677,8 @@
     renderRuns(true);
     renderSubdomains();
     renderDataTab();
+    renderLabor();
+    void refreshLaborInfo();
     void refreshSubdomains(true).catch((error) => {
       if (disposed) {
         return;
