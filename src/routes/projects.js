@@ -1459,6 +1459,47 @@ router.get("/:id/subdomains", requireApiUser(), (req, res) => {
   res.json(payload);
 });
 
+router.get("/:id/ip-overlaps", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rows = db
+    .prepare(`
+      SELECT d.value AS ip, s.host AS host, d.record_type AS type
+      FROM dns_records d
+      JOIN subdomains s ON d.subdomain_id = s.id
+      WHERE d.project_id = ? AND d.record_type IN ('A', 'AAAA')
+      ORDER BY d.value ASC, s.host ASC
+    `)
+    .all(id);
+
+  const groups = {};
+  for (const row of rows) {
+    if (!groups[row.ip]) {
+      groups[row.ip] = [];
+    }
+    if (!groups[row.ip].some(item => item.host === row.host)) {
+      groups[row.ip].push({ host: row.host, type: row.type });
+    }
+  }
+
+  const payload = Object.entries(groups)
+    .map(([ip, hosts]) => ({
+      ip,
+      hosts,
+      count: hosts.length,
+    }))
+    .sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip));
+
+  res.json({ ipOverlaps: payload });
+});
+
 function selectProjectSubdomainsByIds(projectId, subdomainIds) {
   const { db } = getDbState();
   const normalized = Array.from(new Set((subdomainIds || []).map((item) => String(item || "").trim()).filter(Boolean)));
