@@ -1489,12 +1489,37 @@ router.get("/:id/ip-overlaps", requireApiUser(), (req, res) => {
     }
   }
 
+  const reverseRows = db
+    .prepare("SELECT ip, domains_json, count, updated_at FROM project_reverse_ip WHERE project_id = ?")
+    .all(id);
+
+  const reverseMap = new Map(
+    reverseRows.map((row) => [
+      row.ip,
+      {
+        domains: JSON.parse(row.domains_json || "[]"),
+        count: row.count,
+        updatedAt: row.updated_at,
+      },
+    ]),
+  );
+
   const payload = Object.entries(groups)
-    .map(([ip, hosts]) => ({
-      ip,
-      hosts,
-      count: hosts.length,
-    }))
+    .map(([ip, hosts]) => {
+      const scanData = reverseMap.get(ip) || null;
+      return {
+        ip,
+        hosts,
+        count: hosts.length,
+        globalScan: scanData
+          ? {
+              domains: scanData.domains,
+              count: scanData.count,
+              updatedAt: scanData.updatedAt,
+            }
+          : null,
+      };
+    })
     .sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip));
 
   res.json({ ipOverlaps: payload });
@@ -2964,6 +2989,26 @@ router.post("/:id/ready-check-task", requireApiUser(), (req, res) => {
     taskKind: "READY_CHECK",
   });
   res.json({ ok: true, runId: run.id, taskKind: "READY_CHECK" });
+});
+
+router.post("/:id/reverse-ip-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "REVERSE_IP" });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "REVERSE_IP",
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "REVERSE_IP" });
 });
 
 router.delete("/:id/asn", requireApiUser(), (req, res) => {

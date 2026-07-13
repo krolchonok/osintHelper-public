@@ -9,6 +9,7 @@ const { executeDorkStatsTask } = require("./dork-stats-task");
 const { executeAsnTask } = require("./asn-task");
 const { executeNetlasDnsTask } = require("./netlas-dns-task");
 const { executeAvailabilityTask } = require("./availability-task");
+const { executeReverseIpTask } = require("./reverse-ip-task");
 const { clampProgress, createId, nowIso } = require("./utils");
 
 class RunDeletedError extends Error {
@@ -188,6 +189,8 @@ async function executeRun(payload, onQueueProgress) {
       result = await executeNetlasDnsTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "READY_CHECK") {
       result = await executeAvailabilityTask(payload.projectId, progressReporter);
+    } else if (payload.taskKind === "REVERSE_IP") {
+      result = await executeReverseIpTask(payload.projectId, progressReporter);
     } else if (payload.type === "ASN_LOOKUP") {
       result = await executeAsnTask(payload.projectId, progressReporter);
     } else if (payload.type === "PASSIVE_SCAN") {

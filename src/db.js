@@ -238,6 +238,19 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_project_email_overrides_project
       ON project_email_overrides(project_id, updated_at DESC);
 
+    CREATE TABLE IF NOT EXISTS project_reverse_ip (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      ip TEXT NOT NULL,
+      domains_json TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(project_id, ip),
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_reverse_ip_project ON project_reverse_ip(project_id);
+
     CREATE TABLE IF NOT EXISTS dork_captcha_sessions (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,

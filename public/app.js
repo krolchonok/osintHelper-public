@@ -2897,9 +2897,10 @@
             <div id="ip-overlaps-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
                 <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-primary" id="ip-overlaps-refresh-btn" type="button">Обновить</button>
+                  <button class="btn btn-primary" id="ip-overlaps-scan-btn" type="button">Запустить скан IP</button>
+                  <button class="btn btn-secondary" id="ip-overlaps-refresh-btn" type="button">Обновить</button>
                 </div>
-                <div class="hint">Группировка поддоменов по их резолвленным IP-адресам (для поиска пересечений на одном хосте).</div>
+                <div class="hint">Группировка поддоменов по IP. Запуск скана выполняет reverse IP-запросы через HackerTarget, чтобы определить глобальное кол-во доменов на IP (отличие VDS от хостинга).</div>
               </div>
               <div id="ip-overlaps-action-message"></div>
               <div id="ip-overlaps-table-root"></div>
@@ -2977,6 +2978,7 @@
     const ipOverlapsPanel = document.getElementById("ip-overlaps-panel");
     const ipOverlapsTableRoot = document.getElementById("ip-overlaps-table-root");
     const ipOverlapsRefreshBtn = document.getElementById("ip-overlaps-refresh-btn");
+    const ipOverlapsScanBtn = document.getElementById("ip-overlaps-scan-btn");
     const ipOverlapsActionMessageEl = document.getElementById("ip-overlaps-action-message");
     const laborPanelRoot = document.getElementById("labor-panel-root");
     const asnActionMessageEl = document.getElementById("asn-action-message");
@@ -3590,9 +3592,9 @@
           <table class="table">
             <thead>
               <tr>
-                <th style="width: 200px;">IP-адрес</th>
-                <th style="width: 100px; text-align: center;">Кол-во</th>
-                <th>Поддомены</th>
+                <th style="width: 180px;">IP-адрес</th>
+                <th style="width: 90px; text-align: center;">В проекте</th>
+                <th>Поддомены & Глобальное окружение</th>
               </tr>
             </thead>
             <tbody>
@@ -3604,11 +3606,52 @@
             .map((item) => `<span class="pill tiny mono">${escapeHtml(item.host)} <span class="hint">(${escapeHtml(String(item.type).toUpperCase())})</span></span>`)
             .join(" ");
 
+          let globalInfoHtml = `<span class="hint" style="font-size: 0.85rem;">Нет данных сканирования. Нажмите «Запустить скан IP».</span>`;
+          if (group.globalScan) {
+            const globalCount = group.globalScan.count;
+            const globalDomains = group.globalScan.domains || [];
+
+            let hostTypeLabel = "";
+            let hostTypeClass = "pill tiny";
+            if (globalCount === 0) {
+              hostTypeLabel = "Локальный / Нет доменов";
+              hostTypeClass = "pill tiny secondary";
+            } else if (globalCount > 30) {
+              hostTypeLabel = "Виртуальный хостинг (Shared)";
+              hostTypeClass = "pill tiny danger";
+            } else {
+              hostTypeLabel = "VDS / Выделенный сервер";
+              hostTypeClass = "pill tiny";
+            }
+
+            const domainsShown = globalDomains.slice(0, 15);
+            const extraCount = globalDomains.length - domainsShown.length;
+            const domainsText = domainsShown.map(d => `<span class="pill tiny mono">${escapeHtml(d)}</span>`).join(" ") + 
+              (extraCount > 0 ? ` <span class="hint">и ещё +${extraCount}</span>` : "");
+
+            globalInfoHtml = `
+              <div style="margin-bottom: 6px;">
+                <span class="${hostTypeClass}">${hostTypeLabel}</span> 
+                <strong>(${globalCount} доменов обнаружено)</strong>
+              </div>
+              <div class="row wrap" style="gap: 5px; font-family: monospace;">${domainsText || '<span class="hint">нет внешних доменов</span>'}</div>
+            `;
+          }
+
           html += `
-            <tr>
-              <td class="mono"><strong>${escapeHtml(group.ip)}</strong></td>
-              <td style="text-align: center;"><span class="${badgeClass}">${group.count}</span></td>
-              <td><div class="row wrap" style="gap: 5px;">${hostsHtml}</div></td>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td class="mono" style="vertical-align: top; padding-top: 12px;"><strong>${escapeHtml(group.ip)}</strong></td>
+              <td style="text-align: center; vertical-align: top; padding-top: 12px;"><span class="${badgeClass}">${group.count}</span></td>
+              <td style="vertical-align: top; padding-top: 12px;">
+                <div style="margin-bottom: 10px;">
+                  <div class="hint" style="margin-bottom: 4px; font-size: 0.85rem;">Поддомены в проекте:</div>
+                  <div class="row wrap" style="gap: 5px;">${hostsHtml}</div>
+                </div>
+                <div style="border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 8px;">
+                  <div class="hint" style="margin-bottom: 4px; font-size: 0.85rem;">Глобальное окружение на IP (поиск хостинга):</div>
+                  ${globalInfoHtml}
+                </div>
+              </td>
             </tr>
           `;
         }
@@ -4926,6 +4969,22 @@
 
     ipOverlapsRefreshBtn.addEventListener("click", () => {
       renderIpOverlaps();
+    });
+
+    ipOverlapsScanBtn.addEventListener("click", async () => {
+      const confirmed = window.confirm("Запустить глобальный скан IP через HackerTarget для выявления размещенных доменов?");
+      if (!confirmed) return;
+
+      ipOverlapsScanBtn.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/reverse-ip-task`, { method: "POST", body: {} });
+        showPopup("Скан IP запущен в очереди", "success");
+        await refreshRuns();
+      } catch (error) {
+        showPopup(friendlyError(error, "Не удалось запустить скан IP"), "error");
+      } finally {
+        ipOverlapsScanBtn.disabled = false;
+      }
     });
 
     nmapPanel.addEventListener("click", async (event) => {
