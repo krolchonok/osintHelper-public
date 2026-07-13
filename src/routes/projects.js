@@ -3000,13 +3000,17 @@ router.post("/:id/reverse-ip-task", requireApiUser(), (req, res) => {
     return;
   }
 
-  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "REVERSE_IP" });
+  const ip = req.body?.ip ? String(req.body.ip).trim() : null;
+  const taskPayload = ip ? { ip } : null;
+
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "REVERSE_IP", taskPayload });
   enqueueScanJob({
     runId: run.id,
     projectId: id,
     type: "PASSIVE_SCAN",
     scanScope: run.scanScope,
     taskKind: "REVERSE_IP",
+    taskPayload,
   });
   res.json({ ok: true, runId: run.id, taskKind: "REVERSE_IP" });
 });

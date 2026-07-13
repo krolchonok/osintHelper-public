@@ -2,7 +2,7 @@ const { getDbState } = require("../db");
 const { nowIso } = require("./utils");
 const crypto = require("crypto");
 
-async function executeReverseIpTask(projectId, onProgress) {
+async function executeReverseIpTask(projectId, onProgress, taskPayload = null) {
   const { db } = getDbState();
   const emit = async (progress, stage) => {
     if (onProgress) {
@@ -21,9 +21,14 @@ async function executeReverseIpTask(projectId, onProgress) {
     `)
     .all(projectId);
 
-  const ips = ipRows.map(row => row.ip).filter(ip => {
+  let ips = ipRows.map(row => row.ip).filter(ip => {
     return ip && (ip.includes(".") || ip.includes(":"));
   });
+
+  const targetIp = taskPayload?.ip;
+  if (targetIp) {
+    ips = [targetIp];
+  }
 
   if (!ips.length) {
     await emit(100, "Нет разрешенных IP-адресов для сканирования");

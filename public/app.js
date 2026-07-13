@@ -3606,7 +3606,7 @@
             .map((item) => `<span class="pill tiny mono">${escapeHtml(item.host)} <span class="hint">(${escapeHtml(String(item.type).toUpperCase())})</span></span>`)
             .join(" ");
 
-          let globalInfoHtml = `<span class="hint" style="font-size: 0.85rem;">Нет данных сканирования. Нажмите «Запустить скан IP».</span>`;
+          let globalInfoHtml = `<span class="hint" style="font-size: 0.85rem;">Нет данных сканирования. Нажмите кнопку «Скан IP» слева.</span>`;
           if (group.globalScan) {
             const globalCount = group.globalScan.count;
             const globalDomains = group.globalScan.domains || [];
@@ -3640,7 +3640,14 @@
 
           html += `
             <tr style="border-bottom: 1px solid var(--border);">
-              <td class="mono" style="vertical-align: top; padding-top: 12px;"><strong>${escapeHtml(group.ip)}</strong></td>
+              <td class="mono" style="vertical-align: top; padding-top: 12px;">
+                <strong>${escapeHtml(group.ip)}</strong>
+                <div style="margin-top: 5px;">
+                  <button class="btn btn-secondary btn-xs scan-single-ip-btn" data-ip="${escapeHtml(group.ip)}" type="button" style="padding: 2px 6px; font-size: 11px;">
+                    Скан IP
+                  </button>
+                </div>
+              </td>
               <td style="text-align: center; vertical-align: top; padding-top: 12px;"><span class="${badgeClass}">${group.count}</span></td>
               <td style="vertical-align: top; padding-top: 12px;">
                 <div style="margin-bottom: 10px;">
@@ -3662,6 +3669,26 @@
         `;
         overlapsTableRoot.innerHTML = html;
         if (actionMessageEl) actionMessageEl.innerHTML = "";
+
+        document.querySelectorAll(".scan-single-ip-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const ip = btn.getAttribute("data-ip");
+            if (!ip) return;
+            btn.disabled = true;
+            try {
+              await api(`/api/projects/${encodeURIComponent(projectId)}/reverse-ip-task`, {
+                method: "POST",
+                body: { ip },
+              });
+              showPopup(`Скан для IP ${ip} запущен в очереди`, "success");
+              await refreshRuns();
+            } catch (error) {
+              showPopup(friendlyError(error, `Не удалось запустить скан для IP ${ip}`), "error");
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
       } catch (err) {
         console.error(err);
         overlapsTableRoot.innerHTML = `<div class="error-text">Ошибка загрузки данных: ${escapeHtml(err.message)}</div>`;

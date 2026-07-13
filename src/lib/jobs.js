@@ -190,7 +190,7 @@ async function executeRun(payload, onQueueProgress) {
     } else if (payload.taskKind === "READY_CHECK") {
       result = await executeAvailabilityTask(payload.projectId, progressReporter);
     } else if (payload.taskKind === "REVERSE_IP") {
-      result = await executeReverseIpTask(payload.projectId, progressReporter);
+      result = await executeReverseIpTask(payload.projectId, progressReporter, payload.taskPayload || null);
     } else if (payload.type === "ASN_LOOKUP") {
       result = await executeAsnTask(payload.projectId, progressReporter);
     } else if (payload.type === "PASSIVE_SCAN") {
