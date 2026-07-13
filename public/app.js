@@ -2961,6 +2961,7 @@
     const tabVtDeepBtn = document.getElementById("tab-vtdeep-btn");
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const tabAsnBtn = document.getElementById("tab-asn-btn");
+    const tabReadyBtn = document.getElementById("tab-ready-btn");
     const tabIpOverlapsBtn = document.getElementById("tab-ip-overlaps-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
