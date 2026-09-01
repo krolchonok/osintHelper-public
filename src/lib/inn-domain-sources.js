@@ -5,7 +5,7 @@ const { domainsFromText, mergeDomainHits, normalizeDomain, normalizeDomainFromUr
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const FETCH_TIMEOUT_MS = 20000;
-const CRTSH_TIMEOUT_MS = 40000;
+const CRTSH_TIMEOUT_MS = 18000;
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
@@ -175,12 +175,10 @@ async function fetchCrtshOrgDomains(variants) {
           });
         }
       } catch (error) {
-        if (attempt === 1) {
-          return sourceResult("crtsh", {
-            ok: false,
-            error: error instanceof Error ? error.message : "crt.sh lookup failed",
-          });
-        }
+        return sourceResult("crtsh", {
+          ok: false,
+          error: error instanceof Error ? error.message : "crt.sh lookup failed",
+        });
       }
     }
   }
@@ -395,40 +393,76 @@ async function fetchWhoisFreaksDomains(variants) {
   return sourceResult("whoisfreaks", { ok: true, domains: [], note: "WhoisFreaks: совпадений нет" });
 }
 
+const SOURCE_BUDGET_MS = 20000;
+
+function withBudget(source, promise) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(
+        sourceResult(source, {
+          ok: false,
+          error: `Timed out after ${SOURCE_BUDGET_MS}ms`,
+          note: "Источник отвечал слишком долго, пропущен",
+        }),
+      );
+    }, SOURCE_BUDGET_MS);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        resolve(
+          sourceResult(source, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      },
+    );
+  });
+}
+
 async function lookupCompanyDomains(company) {
   const variants = buildOrgNameVariants(company);
   const sourceResults = [];
 
   const runners = [
-    () => fetchListOrgDomains(company),
-    () => fetchCheckoDomains(company.inn),
-    () => fetchDaDataDomains(company.inn),
-    async () => {
-      try {
-        const netlas = await findOrgDomainsByCompany(company);
-        return sourceResult("netlas", {
-          ok: true,
-          domains: netlas.domains,
-          matchedOrg: netlas.matchedOrg,
-          note: netlas.hasNetlasKey ? "Netlas reverse WHOIS" : "Netlas (без API-ключа, лимит)",
-        });
-      } catch (error) {
-        if (error && error.code === "NETLAS_RATE_LIMIT") {
-          return sourceResult("netlas", {
-            ok: false,
-            error: "Netlas daily limit exceeded",
-            note: "Добавь NETLAS_API_KEY или повтори завтра",
-          });
-        }
-        return sourceResult("netlas", {
-          ok: false,
-          error: error instanceof Error ? error.message : "Netlas lookup failed",
-        });
-      }
-    },
-    () => fetchViewDnsDomains(variants),
-    () => fetchCrtshOrgDomains(variants),
-    () => fetchWhoisFreaksDomains(variants),
+    () => withBudget("list-org", fetchListOrgDomains(company)),
+    () => withBudget("checko", fetchCheckoDomains(company.inn)),
+    () => withBudget("dadata", fetchDaDataDomains(company.inn)),
+    () =>
+      withBudget(
+        "netlas",
+        (async () => {
+          try {
+            const netlas = await findOrgDomainsByCompany(company);
+            return sourceResult("netlas", {
+              ok: true,
+              domains: netlas.domains,
+              matchedOrg: netlas.matchedOrg,
+              note: netlas.hasNetlasKey ? "Netlas reverse WHOIS" : "Netlas (без API-ключа, лимит)",
+            });
+          } catch (error) {
+            if (error && error.code === "NETLAS_RATE_LIMIT") {
+              return sourceResult("netlas", {
+                ok: false,
+                error: "Netlas daily limit exceeded",
+                note: "Добавь NETLAS_API_KEY или повтори завтра",
+              });
+            }
+            return sourceResult("netlas", {
+              ok: false,
+              error: error instanceof Error ? error.message : "Netlas lookup failed",
+            });
+          }
+        })(),
+      ),
+    () => withBudget("viewdns", fetchViewDnsDomains(variants)),
+    () => withBudget("crtsh", fetchCrtshOrgDomains(variants)),
+    () => withBudget("whoisfreaks", fetchWhoisFreaksDomains(variants)),
   ];
 
   const settled = await Promise.allSettled(runners.map((runner) => runner()));
