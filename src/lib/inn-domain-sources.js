@@ -8,20 +8,32 @@ const FETCH_TIMEOUT_MS = 20000;
 const CRTSH_TIMEOUT_MS = 18000;
 
 async function fetchWithTimeout(url, options = {}) {
+  const { parentSignal, timeoutMs, headers, ...rest } = options;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);
+  const onParentAbort = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort();
+    } else {
+      parentSignal.addEventListener("abort", onParentAbort);
+    }
+  }
   try {
     return await fetch(url, {
-      ...options,
+      ...rest,
       signal: controller.signal,
       headers: {
         "User-Agent": USER_AGENT,
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
-        ...(options.headers || {}),
+        ...(headers || {}),
       },
     });
   } finally {
     clearTimeout(timeout);
+    if (parentSignal) {
+      parentSignal.removeEventListener("abort", onParentAbort);
+    }
   }
 }
 
@@ -57,7 +69,7 @@ function sortOrgVariants(variants) {
   return [...new Set(variants || [])].sort((left, right) => rankOrgVariant(right) - rankOrgVariant(left));
 }
 
-async function fetchListOrgDomains(company) {
+async function fetchListOrgDomains(company, signal) {
   const inn = String(company?.inn || "").trim();
   const ogrn = String(company?.ogrn || "").trim();
   const names = [company?.fullName, company?.shortName].filter(Boolean);
@@ -66,7 +78,7 @@ async function fetchListOrgDomains(company) {
   for (const name of names) {
     try {
       const searchUrl = `https://www.list-org.com/search?type=name&val=${encodeURIComponent(name)}`;
-      const searchRes = await fetchWithTimeout(searchUrl);
+      const searchRes = await fetchWithTimeout(searchUrl, { parentSignal: signal });
       if (!searchRes.ok) {
         continue;
       }
@@ -83,6 +95,7 @@ async function fetchListOrgDomains(company) {
       if (!companyIds.length && ogrn) {
         const ogrnRes = await fetchWithTimeout(
           `https://www.list-org.com/search?type=ogrn&val=${encodeURIComponent(ogrn)}`,
+          { parentSignal: signal },
         );
         if (ogrnRes.ok) {
           const ogrnHtml = await ogrnRes.text();
@@ -91,7 +104,9 @@ async function fetchListOrgDomains(company) {
       }
 
       for (const companyId of [...new Set(companyIds)].slice(0, 5)) {
-        const pageRes = await fetchWithTimeout(`https://www.list-org.com/company/${companyId}`);
+        const pageRes = await fetchWithTimeout(`https://www.list-org.com/company/${companyId}`, {
+          parentSignal: signal,
+        });
         if (!pageRes.ok) {
           continue;
         }
@@ -126,7 +141,7 @@ async function fetchListOrgDomains(company) {
   });
 }
 
-async function fetchCrtshOrgDomains(variants) {
+async function fetchCrtshOrgDomains(variants, signal) {
   const tried = [];
   for (const org of sortOrgVariants(variants).slice(0, 8)) {
     if (!/^[A-Za-z0-9 .,&'"-]+$/.test(org)) {
@@ -138,7 +153,7 @@ async function fetchCrtshOrgDomains(variants) {
       try {
         const response = await fetchWithTimeout(
           `https://crt.sh/?o=${encodeURIComponent(org)}&output=json`,
-          { timeoutMs: CRTSH_TIMEOUT_MS },
+          { timeoutMs: CRTSH_TIMEOUT_MS, parentSignal: signal },
         );
         if (response.status === 502 && attempt === 0) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -190,7 +205,7 @@ async function fetchCrtshOrgDomains(variants) {
   });
 }
 
-async function fetchViewDnsDomains(variants) {
+async function fetchViewDnsDomains(variants, signal) {
   for (const org of sortOrgVariants(variants).slice(0, 5)) {
     if (!/^[A-Za-z0-9 .,&'"-]+$/.test(org)) {
       continue;
@@ -199,7 +214,7 @@ async function fetchViewDnsDomains(variants) {
     try {
       const response = await fetchWithTimeout(
         `https://viewdns.info/reversewhois/?q=${encodeURIComponent(org)}`,
-        { headers: { Accept: "text/html" } },
+        { headers: { Accept: "text/html" }, parentSignal: signal },
       );
       if (!response.ok) {
         continue;
@@ -235,7 +250,7 @@ async function fetchViewDnsDomains(variants) {
   return sourceResult("viewdns", { ok: true, domains: [], note: "ViewDNS: совпадений нет" });
 }
 
-async function fetchCheckoDomains(inn) {
+async function fetchCheckoDomains(inn, signal) {
   const apiKey = String(process.env.CHECKO_API_KEY || "").trim();
   if (!apiKey) {
     return sourceResult("checko", {
@@ -251,7 +266,10 @@ async function fetchCheckoDomains(inn) {
       : `https://api.checko.ru/v2/company?key=${encodeURIComponent(apiKey)}&inn=${encodeURIComponent(inn)}`;
 
   try {
-    const response = await fetchWithTimeout(endpoint, { headers: { Accept: "application/json" } });
+    const response = await fetchWithTimeout(endpoint, {
+      headers: { Accept: "application/json" },
+      parentSignal: signal,
+    });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload?.meta?.message || payload?.error || `HTTP ${response.status}`);
@@ -278,7 +296,7 @@ async function fetchCheckoDomains(inn) {
   }
 }
 
-async function fetchDaDataDomains(inn) {
+async function fetchDaDataDomains(inn, signal) {
   const token = String(process.env.DADATA_TOKEN || process.env.DADATA_API_KEY || "").trim();
   const secret = String(process.env.DADATA_SECRET || "").trim();
   if (!token) {
@@ -299,6 +317,7 @@ async function fetchDaDataDomains(inn) {
         ...(secret ? { "X-Secret": secret } : {}),
       },
       body: JSON.stringify({ query: inn }),
+      parentSignal: signal,
     });
 
     const payload = await response.json();
@@ -339,7 +358,7 @@ async function fetchDaDataDomains(inn) {
   }
 }
 
-async function fetchWhoisFreaksDomains(variants) {
+async function fetchWhoisFreaksDomains(variants, signal) {
   const apiKey = String(process.env.WHOISFREAKS_API_KEY || "").trim();
   if (!apiKey) {
     return sourceResult("whoisfreaks", {
@@ -360,7 +379,10 @@ async function fetchWhoisFreaksDomains(variants) {
         encodeURIComponent(apiKey) +
         "&whois=reverse&company=" +
         encodeURIComponent(org);
-      const response = await fetchWithTimeout(url, { headers: { Accept: "application/json" } });
+      const response = await fetchWithTimeout(url, {
+        headers: { Accept: "application/json" },
+        parentSignal: signal,
+      });
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
@@ -395,9 +417,15 @@ async function fetchWhoisFreaksDomains(variants) {
 
 const SOURCE_BUDGET_MS = 20000;
 
-function withBudget(source, promise) {
+// Cancels the underlying fetch chain (via the AbortController passed to `run`)
+// once the budget expires, instead of merely abandoning the promise — otherwise
+// slow sources keep running in the background and pile up across requests,
+// eventually starving the connection pool and making later lookups slower still.
+function withBudget(source, run) {
+  const controller = new AbortController();
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
+      controller.abort();
       resolve(
         sourceResult(source, {
           ok: false,
@@ -407,7 +435,7 @@ function withBudget(source, promise) {
       );
     }, SOURCE_BUDGET_MS);
 
-    promise.then(
+    run(controller.signal).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -430,39 +458,36 @@ async function lookupCompanyDomains(company) {
   const sourceResults = [];
 
   const runners = [
-    () => withBudget("list-org", fetchListOrgDomains(company)),
-    () => withBudget("checko", fetchCheckoDomains(company.inn)),
-    () => withBudget("dadata", fetchDaDataDomains(company.inn)),
+    () => withBudget("list-org", (signal) => fetchListOrgDomains(company, signal)),
+    () => withBudget("checko", (signal) => fetchCheckoDomains(company.inn, signal)),
+    () => withBudget("dadata", (signal) => fetchDaDataDomains(company.inn, signal)),
     () =>
-      withBudget(
-        "netlas",
-        (async () => {
-          try {
-            const netlas = await findOrgDomainsByCompany(company);
-            return sourceResult("netlas", {
-              ok: true,
-              domains: netlas.domains,
-              matchedOrg: netlas.matchedOrg,
-              note: netlas.hasNetlasKey ? "Netlas reverse WHOIS" : "Netlas (без API-ключа, лимит)",
-            });
-          } catch (error) {
-            if (error && error.code === "NETLAS_RATE_LIMIT") {
-              return sourceResult("netlas", {
-                ok: false,
-                error: "Netlas daily limit exceeded",
-                note: "Добавь NETLAS_API_KEY или повтори завтра",
-              });
-            }
+      withBudget("netlas", async () => {
+        try {
+          const netlas = await findOrgDomainsByCompany(company);
+          return sourceResult("netlas", {
+            ok: true,
+            domains: netlas.domains,
+            matchedOrg: netlas.matchedOrg,
+            note: netlas.hasNetlasKey ? "Netlas reverse WHOIS" : "Netlas (без API-ключа, лимит)",
+          });
+        } catch (error) {
+          if (error && error.code === "NETLAS_RATE_LIMIT") {
             return sourceResult("netlas", {
               ok: false,
-              error: error instanceof Error ? error.message : "Netlas lookup failed",
+              error: "Netlas daily limit exceeded",
+              note: "Добавь NETLAS_API_KEY или повтори завтра",
             });
           }
-        })(),
-      ),
-    () => withBudget("viewdns", fetchViewDnsDomains(variants)),
-    () => withBudget("crtsh", fetchCrtshOrgDomains(variants)),
-    () => withBudget("whoisfreaks", fetchWhoisFreaksDomains(variants)),
+          return sourceResult("netlas", {
+            ok: false,
+            error: error instanceof Error ? error.message : "Netlas lookup failed",
+          });
+        }
+      }),
+    () => withBudget("viewdns", (signal) => fetchViewDnsDomains(variants, signal)),
+    () => withBudget("crtsh", (signal) => fetchCrtshOrgDomains(variants, signal)),
+    () => withBudget("whoisfreaks", (signal) => fetchWhoisFreaksDomains(variants, signal)),
   ];
 
   const settled = await Promise.allSettled(runners.map((runner) => runner()));
