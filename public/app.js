@@ -2770,7 +2770,7 @@
               <div class="whois-block" style="margin-top: 20px;">
                 <div class="panel-header">
                   <h3>Поиск доменов по ИНН</h3>
-                  <p>ЕГРЮЛ/ЕГРИП → название организации → reverse-whois через Netlas</p>
+                  <p>ЕГРЮЛ → агрегация из List-Org, Netlas, ViewDNS, crt.sh (+ Checko/DaData/WhoisFreaks по API-ключам)</p>
                 </div>
                 <div class="row wrap project-panel-toolbar">
                   <input type="text" id="inn-search-input" class="text-input mono" placeholder="ИНН (10 или 12 цифр)" style="max-width:220px" />
@@ -3822,15 +3822,22 @@
       whoisOrgDomainsResult.style.display = "none";
 
       try {
-        const res = await api(`/api/netlas/org-domains?org=${encodeURIComponent(org)}`);
-        const domains = Array.isArray(res.domains) ? res.domains : [];
+        const lookup = await findOrgDomainsByName(org);
+        const domains = lookup.domains;
+        const matchedHint = lookup.matchedOrg
+          ? `<div class="hint" style="margin-bottom:8px">Совпадение в Netlas WHOIS: <span class="mono">${escapeHtml(lookup.matchedOrg)}</span></div>`
+          : "";
 
         if (domains.length === 0) {
-          whoisOrgDomainsResult.innerHTML = '<p class="hint">Домены не найдены.</p>';
+          const netlasHint = lookup.hasNetlasKey
+            ? "Netlas не нашёл домены по этому registrant."
+            : "Добавь NETLAS_API_KEY в Settings → Providers для reverse-whois.";
+          whoisOrgDomainsResult.innerHTML = `<p class="hint">Домены не найдены.</p><p class="hint">${netlasHint}</p>`;
         } else {
           const links = domains.map(d => `<span class="pill mono" style="margin:2px; cursor:pointer;" data-action="add-scanned-domain" data-domain="${escapeHtml(d)}">${escapeHtml(d)}</span>`).join("");
           whoisOrgDomainsResult.innerHTML = `
             <div class="panel" style="padding:12px; background:rgba(255,255,255,0.05)">
+              ${matchedHint}
               <div class="hint" style="margin-bottom:8px">Найдено в Netlas: ${domains.length}</div>
               <div class="row wrap">${links}</div>
               <p class="hint mt-2" style="font-size:11px">Нажмите на домен, чтобы добавить его в проект.</p>
@@ -3859,7 +3866,11 @@
 
     async function findOrgDomainsByName(org) {
       const res = await api(`/api/netlas/org-domains?org=${encodeURIComponent(org)}`);
-      return Array.isArray(res.domains) ? res.domains : [];
+      return {
+        domains: Array.isArray(res.domains) ? res.domains : [],
+        matchedOrg: res.matchedOrg || null,
+        hasNetlasKey: Boolean(res.hasNetlasKey),
+      };
     }
 
     innSearchBtn.addEventListener("click", async () => {
@@ -3875,8 +3886,8 @@
       innSearchResult.style.display = "none";
 
       try {
-        const lookup = await api(`/api/egrul/lookup?inn=${encodeURIComponent(inn)}`);
-        const company = lookup.company;
+        const payload = await api(`/api/egrul/domains?inn=${encodeURIComponent(inn)}`);
+        const company = payload.company;
 
         if (!company || !company.fullName) {
           innSearchResult.innerHTML = '<p class="hint">Организация с таким ИНН не найдена в ЕГРЮЛ/ЕГРИП.</p>';
@@ -3884,29 +3895,58 @@
           return;
         }
 
-        let domains = await findOrgDomainsByName(company.fullName);
-        if (domains.length === 0 && company.shortName && company.shortName !== company.fullName) {
-          domains = await findOrgDomainsByName(company.shortName);
-        }
+        const domains = Array.isArray(payload.domains) ? payload.domains : [];
+        const domainDetails = Array.isArray(payload.domainDetails) ? payload.domainDetails : [];
+        const matchedOrg = payload.matchedOrg || null;
+        const sources = payload.sources && typeof payload.sources === "object" ? payload.sources : {};
+        const sourceLabels = {
+          "list-org": "List-Org",
+          checko: "Checko",
+          dadata: "DaData",
+          netlas: "Netlas",
+          viewdns: "ViewDNS",
+          crtsh: "crt.sh",
+          whoisfreaks: "WhoisFreaks",
+        };
 
         const header = `
           <div class="hint" style="margin-bottom:8px">
             ${escapeHtml(company.fullName)}${company.ogrn ? ` · ОГРН ${escapeHtml(company.ogrn)}` : ""}
           </div>
         `;
+        const matchedHint = matchedOrg
+          ? `<div class="hint" style="margin-bottom:8px">Reverse-WHOIS match: <span class="mono">${escapeHtml(matchedOrg)}</span></div>`
+          : "";
+
+        const sourceSummary = Object.entries(sources)
+          .map(([key, item]) => {
+            const label = sourceLabels[key] || key;
+            const count = Array.isArray(item?.domains) ? item.domains.length : 0;
+            const note = item?.note ? ` · ${item.note}` : "";
+            const error = item?.error ? ` · ${item.error}` : "";
+            return `<div class="hint" style="font-size:11px">${escapeHtml(label)}: ${count}${escapeHtml(note || error)}</div>`;
+          })
+          .join("");
 
         if (domains.length === 0) {
-          innSearchResult.innerHTML = `${header}<p class="hint">Домены не найдены.</p>`;
+          innSearchResult.innerHTML = `${header}${sourceSummary ? `<div style="margin-bottom:8px">${sourceSummary}</div>` : ""}<p class="hint">Домены не найдены ни в одном источнике.</p><p class="hint">Бесплатные ключи: CHECKO_API_KEY, DADATA_TOKEN, NETLAS_API_KEY, WHOISFREAKS_API_KEY (.env или Settings).</p>`;
         } else {
+          const detailsByDomain = new Map(domainDetails.map((item) => [item.domain, item.sources || []]));
           const links = domains
-            .map((d) => `<span class="pill mono" style="margin:2px; cursor:pointer;" data-action="add-scanned-domain" data-domain="${escapeHtml(d)}">${escapeHtml(d)}</span>`)
+            .map((d) => {
+              const src = (detailsByDomain.get(d) || []).map((s) => sourceLabels[s] || s).join(", ");
+              const title = src ? ` title="${escapeHtml(src)}"` : "";
+              return `<span class="pill mono" style="margin:2px; cursor:pointer;" data-action="add-scanned-domain" data-domain="${escapeHtml(d)}"${title}>${escapeHtml(d)}</span>`;
+            })
             .join("");
           innSearchResult.innerHTML = `
             <div class="panel" style="padding:12px; background:rgba(255,255,255,0.05)">
               ${header}
-              <div class="hint" style="margin-bottom:8px">Найдено в Netlas: ${domains.length}</div>
+              ${matchedHint}
+              <div class="hint" style="margin-bottom:8px">Найдено доменов: ${domains.length}</div>
+              ${sourceSummary ? `<div style="margin-bottom:8px">${sourceSummary}</div>` : ""}
               <div class="row wrap">${links}</div>
-              <p class="hint mt-2" style="font-size:11px">Нажмите на домен, чтобы добавить его в проект.</p>
+              <p class="hint mt-2" style="font-size:11px">Наведи на домен — источник. Клик — добавить в проект.</p>
             </div>
           `;
         }
