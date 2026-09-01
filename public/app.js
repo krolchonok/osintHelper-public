@@ -2769,6 +2769,17 @@
               </div>
               <div class="whois-block" style="margin-top: 20px;">
                 <div class="panel-header">
+                  <h3>Поиск доменов по ИНН</h3>
+                  <p>ЕГРЮЛ/ЕГРИП → название организации → reverse-whois через Netlas</p>
+                </div>
+                <div class="row wrap project-panel-toolbar">
+                  <input type="text" id="inn-search-input" class="text-input mono" placeholder="ИНН (10 или 12 цифр)" style="max-width:220px" />
+                  <button class="btn btn-secondary" id="inn-search-btn" type="button">Найти домены</button>
+                </div>
+                <div id="inn-search-result" style="margin-top:12px; display:none;"></div>
+              </div>
+              <div class="whois-block" style="margin-top: 20px;">
+                <div class="panel-header">
                   <h3>2ip</h3>
                   <p>Geo, провайдер, хостинг</p>
                 </div>
@@ -3039,6 +3050,9 @@
     const whoisExportCsvBtn = document.getElementById("whois-export-csv-btn");
     const whoisFindOrgDomainsBtn = document.getElementById("whois-find-org-domains-btn");
     const whoisOrgDomainsResult = document.getElementById("whois-org-domains-result");
+    const innSearchInput = document.getElementById("inn-search-input");
+    const innSearchBtn = document.getElementById("inn-search-btn");
+    const innSearchResult = document.getElementById("inn-search-result");
     const runsExportCsvBtn = document.getElementById("runs-export-csv-btn");
 
     function autosizeWhoisField() {
@@ -3837,7 +3851,80 @@
       if (target.dataset.action === "add-scanned-domain") {
         const domain = target.dataset.domain;
         if (!domain) return;
-        
+
+        projectDomainInput.value = domain;
+        projectDomainSubmit.click();
+      }
+    });
+
+    async function findOrgDomainsByName(org) {
+      const res = await api(`/api/netlas/org-domains?org=${encodeURIComponent(org)}`);
+      return Array.isArray(res.domains) ? res.domains : [];
+    }
+
+    innSearchBtn.addEventListener("click", async () => {
+      const inn = String(innSearchInput.value || "").trim();
+      if (!/^\d{10}$|^\d{12}$/.test(inn)) {
+        alert("ИНН должен содержать 10 или 12 цифр");
+        return;
+      }
+
+      innSearchBtn.disabled = true;
+      const originalText = innSearchBtn.textContent;
+      innSearchBtn.textContent = "Поиск...";
+      innSearchResult.style.display = "none";
+
+      try {
+        const lookup = await api(`/api/egrul/lookup?inn=${encodeURIComponent(inn)}`);
+        const company = lookup.company;
+
+        if (!company || !company.fullName) {
+          innSearchResult.innerHTML = '<p class="hint">Организация с таким ИНН не найдена в ЕГРЮЛ/ЕГРИП.</p>';
+          innSearchResult.style.display = "block";
+          return;
+        }
+
+        let domains = await findOrgDomainsByName(company.fullName);
+        if (domains.length === 0 && company.shortName && company.shortName !== company.fullName) {
+          domains = await findOrgDomainsByName(company.shortName);
+        }
+
+        const header = `
+          <div class="hint" style="margin-bottom:8px">
+            ${escapeHtml(company.fullName)}${company.ogrn ? ` · ОГРН ${escapeHtml(company.ogrn)}` : ""}
+          </div>
+        `;
+
+        if (domains.length === 0) {
+          innSearchResult.innerHTML = `${header}<p class="hint">Домены не найдены.</p>`;
+        } else {
+          const links = domains
+            .map((d) => `<span class="pill mono" style="margin:2px; cursor:pointer;" data-action="add-scanned-domain" data-domain="${escapeHtml(d)}">${escapeHtml(d)}</span>`)
+            .join("");
+          innSearchResult.innerHTML = `
+            <div class="panel" style="padding:12px; background:rgba(255,255,255,0.05)">
+              ${header}
+              <div class="hint" style="margin-bottom:8px">Найдено в Netlas: ${domains.length}</div>
+              <div class="row wrap">${links}</div>
+              <p class="hint mt-2" style="font-size:11px">Нажмите на домен, чтобы добавить его в проект.</p>
+            </div>
+          `;
+        }
+        innSearchResult.style.display = "block";
+      } catch (err) {
+        alert(friendlyError(err, "Ошибка поиска по ИНН"));
+      } finally {
+        innSearchBtn.disabled = false;
+        innSearchBtn.textContent = originalText;
+      }
+    });
+
+    innSearchResult.addEventListener("click", async (e) => {
+      const target = e.target;
+      if (target.dataset.action === "add-scanned-domain") {
+        const domain = target.dataset.domain;
+        if (!domain) return;
+
         projectDomainInput.value = domain;
         projectDomainSubmit.click();
       }
