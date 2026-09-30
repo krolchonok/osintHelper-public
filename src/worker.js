@@ -3,15 +3,15 @@ require("dotenv").config({ quiet: true });
 const { openDatabase } = require("./db");
 const { config } = require("./lib/config");
 const { startScanWorker } = require("./lib/job-queue");
+const { logWorkerFailure } = require("./lib/worker-logging");
 
 openDatabase(config.sqlitePath);
 
 const worker = startScanWorker({
   concurrency: config.workerConcurrency,
   pollIntervalMs: config.workerPollIntervalMs,
-  onError(error, job) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[worker] failed ${job.runId}: ${message}`);
+  onError(error, job, timing) {
+    logWorkerFailure(error, job, timing);
   },
 });
 
