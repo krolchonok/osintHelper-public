@@ -598,7 +598,7 @@ async function fetchWaybackRows(domain) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WAYBACK_TIMEOUT_MS);
   const url =
-    `${WAYBACK_BASE}?url=${encodeURIComponent(`*.${domain}/*`)}` +
+    `${WAYBACK_BASE}?url=${encodeURIComponent(`${domain}/`)}&matchType=domain` +
     "&output=json" +
     "&fl=timestamp,original,mimetype,statuscode,digest,length" +
     "&filter=statuscode:200" +
