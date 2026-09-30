@@ -232,7 +232,7 @@ body::after { opacity: .12; }
 }
 
 .page, .shell.page {
-  width: min(1600px, calc(100vw - 300px));
+  width: calc(100% - 252px);
   max-width: none;
   min-height: 100vh;
   margin: 0 auto 0 252px;
