@@ -100,6 +100,118 @@
       <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
     </svg>
   `;
+  const ICON_SUBDOMAINS = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="5" cy="12" r="2.4"></circle>
+      <circle cx="19" cy="5" r="2.4"></circle>
+      <circle cx="19" cy="19" r="2.4"></circle>
+      <path d="M7.2 10.7 16.8 6.1M7.2 13.3 16.8 17.9"></path>
+    </svg>
+  `;
+  const ICON_GLOBE = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M3 12h18M12 3c2.5 2.6 4 6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-6-4-9s1.5-6.4 4-9z"></path>
+    </svg>
+  `;
+  const ICON_ARCHIVE = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="4" width="18" height="4" rx="1"></rect>
+      <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"></path>
+      <path d="M10 12h4"></path>
+    </svg>
+  `;
+  const ICON_SEARCH = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="M21 21l-4.3-4.3"></path>
+    </svg>
+  `;
+  const ICON_MAIL = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+      <path d="M3 7l9 6 9-6"></path>
+    </svg>
+  `;
+  const ICON_SHIELD = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"></path>
+      <path d="M9 12l2 2 4-4"></path>
+    </svg>
+  `;
+  const ICON_LAYERS = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <polygon points="12 3 3 8 12 13 21 8 12 3"></polygon>
+      <polyline points="3 13 12 18 21 13"></polyline>
+    </svg>
+  `;
+  const ICON_ASN = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="5" r="2.2"></circle>
+      <circle cx="5" cy="19" r="2.2"></circle>
+      <circle cx="19" cy="19" r="2.2"></circle>
+      <path d="M12 7.2V13M12 13 6.4 17.2M12 13l5.6 4.2"></path>
+    </svg>
+  `;
+  const ICON_CHECK_CIRCLE = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M8 12.5l2.5 2.5L16 9.5"></path>
+    </svg>
+  `;
+  const ICON_TERMINAL = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+      <path d="M7 9l3 3-3 3M13 15h4"></path>
+    </svg>
+  `;
+  const ICON_CLOCK = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M12 7v5l3.5 2"></path>
+    </svg>
+  `;
+  const ICON_PLAY = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <polygon points="6 4 20 12 6 20 6 4"></polygon>
+    </svg>
+  `;
+  const ICON_REFRESH = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M21 12a9 9 0 1 1-3-6.7"></path>
+      <polyline points="21 3 21 9 15 9"></polyline>
+    </svg>
+  `;
+  const ICON_DOWNLOAD = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3v12"></path>
+      <polyline points="7 10 12 15 17 10"></polyline>
+      <path d="M4 19h16"></path>
+    </svg>
+  `;
+  const ICON_PLUS = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 5v14M5 12h14"></path>
+    </svg>
+  `;
+  const ICON_PIN = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 21s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z"></path>
+      <circle cx="12" cy="10" r="2.4"></circle>
+    </svg>
+  `;
+  const ICON_CHEVRON_DOWN = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <polyline points="6 9 12 15 18 9"></polyline>
+    </svg>
+  `;
+  const ICON_ID_CARD = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+      <circle cx="8.5" cy="12" r="2"></circle>
+      <path d="M13.5 10h5M13.5 14h5M5 16.5c.6-1.3 1.9-2 3.5-2s2.9.7 3.5 2"></path>
+    </svg>
+  `;
 
   function normalizeSubdomainsPageSize(raw) {
     const value = Number.parseInt(String(raw || ""), 10);
@@ -586,9 +698,17 @@
 
     const themeBtnMarkup = buildThemeToggleButton();
     const effectsBtnMarkup = buildEffectsToggleButton();
+    const currentPath = normalizePath(window.location.pathname);
+    const projectIndexActive = currentPath === "/";
+    const projectAreaActive = currentPath.startsWith("/projects/");
+    const utilityMarkup = `<div class="nav-utilities">${themeBtnMarkup}${effectsBtnMarkup}</div>`;
 
     if (!state.user) {
-      navEl.innerHTML = [themeBtnMarkup, effectsBtnMarkup, '<a href="/login" data-link>Вход</a>'].join("");
+      const loginIsActive = currentPath === "/login";
+      navEl.innerHTML = [
+        `<a class="nav-link ${loginIsActive ? "is-active" : ""}" href="/login" data-link ${loginIsActive ? 'aria-current="page"' : ""}>Войти</a>`,
+        utilityMarkup,
+      ].join("");
       setupTopbarUiListeners();
       return;
     }
@@ -596,18 +716,18 @@
     const searchValue = escapeHtml(state.projectSearch || "");
     const adminLinks =
       state.user.role === "ADMIN"
-        ? '<a href="/settings" data-link>Провайдеры</a><a href="/admin" data-link>Админка</a>'
+        ? `<a class="nav-link ${currentPath === "/settings" ? "is-active" : ""}" href="/settings" data-link ${currentPath === "/settings" ? 'aria-current="page"' : ""}>Провайдеры</a><a class="nav-link ${currentPath === "/admin" ? "is-active" : ""}" href="/admin" data-link ${currentPath === "/admin" ? 'aria-current="page"' : ""}>Пользователи</a>`
         : "";
+    const projectSearchMarkup = projectIndexActive
+      ? `<input id="topbar-search" class="text-input topbar-search" type="search" placeholder="Найти проект или домен" aria-label="Найти проект или домен" value="${searchValue}" />`
+      : "";
 
     navEl.innerHTML = [
-      themeBtnMarkup,
-      effectsBtnMarkup,
-      '<a href="/" data-link>Проекты</a>',
+      `<a class="nav-link ${projectIndexActive ? "is-active" : projectAreaActive ? "is-current" : ""}" href="/" data-link ${projectIndexActive ? 'aria-current="page"' : ""}>Проекты</a>`,
       adminLinks,
-      `<input id="topbar-search" class="text-input topbar-search" type="search" placeholder="Поиск проектов..." aria-label="Поиск проектов" value="${searchValue}" />`,
-      `<span class="session-user mono">${escapeHtml(state.user.email)}</span>`,
-      `<span class="pill tiny">${escapeHtml(state.user.role)}</span>`,
-      '<button type="button" id="logout-btn">Выход</button>',
+      projectSearchMarkup,
+      `<div class="nav-account"><span class="session-user">${escapeHtml(state.user.login || state.user.email)}</span><span class="pill tiny">${escapeHtml(state.user.role === "ADMIN" ? "Администратор" : "Пользователь")}</span><button class="nav-logout" type="button" id="logout-btn">Выйти</button></div>`,
+      utilityMarkup,
     ].join("");
 
     setupTopbarUiListeners();
@@ -686,25 +806,23 @@
 
     appEl.innerHTML = `
       <div class="stack-xl auth-page">
-        <section class="panel hero auth-card">
-          <h1>Вход</h1>
-          <p>Используйте аккаунт для доступа к панели разведки.</p>
-        </section>
-
-        <section class="panel auth-card">
+        <section class="panel auth-card auth-card-login">
+          <div class="auth-heading">
+            <span class="auth-eyebrow">OSINT HELPER</span>
+            <h1>С возвращением</h1>
+            <p>Войдите в рабочее пространство, чтобы продолжить расследование.</p>
+          </div>
           <form id="login-form">
             <div id="login-message"></div>
             <div class="field">
-              <label for="login-email">Почта</label>
-              <input id="login-email" class="text-input" type="email" required />
+              <label for="login-name">Логин</label>
+              <input id="login-name" class="text-input" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Введите логин" required />
             </div>
             <div class="field">
               <label for="login-password">Пароль</label>
-              <input id="login-password" class="text-input" type="password" required />
+              <input id="login-password" class="text-input" type="password" autocomplete="current-password" placeholder="Введите пароль" required />
             </div>
-            <div class="row">
-              <button class="btn btn-primary" type="submit" id="login-submit">Войти</button>
-            </div>
+            <button class="btn btn-primary auth-submit" type="submit" id="login-submit">Войти в систему</button>
           </form>
           ${setupMessage}
         </section>
@@ -718,7 +836,7 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
 
-      const email = document.getElementById("login-email").value.trim();
+      const login = document.getElementById("login-name").value.trim();
       const password = document.getElementById("login-password").value;
 
       submit.disabled = true;
@@ -727,7 +845,7 @@
       try {
         await api("/api/auth/login", {
           method: "POST",
-          body: { email, password },
+          body: { login, password },
         });
 
         await loadCurrentUser();
@@ -793,8 +911,8 @@
               )}" />
             </div>
             <div class="field">
-              <label for="setup-email">Почта администратора</label>
-              <input id="setup-email" class="text-input" type="email" required />
+              <label for="setup-login">Логин администратора</label>
+              <input id="setup-login" class="text-input" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32" pattern="[a-zA-Z0-9._-]+" required />
             </div>
             <div class="field">
               <label for="setup-password">Пароль администратора</label>
@@ -817,7 +935,7 @@
       event.preventDefault();
 
       const token = document.getElementById("setup-token").value.trim();
-      const email = document.getElementById("setup-email").value.trim();
+      const login = document.getElementById("setup-login").value.trim();
       const password = document.getElementById("setup-password").value;
 
       submit.disabled = true;
@@ -826,7 +944,7 @@
       try {
         await api("/api/auth/setup", {
           method: "POST",
-          body: { token, email, password },
+          body: { token, login, password },
         });
 
         await loadCurrentUser();
@@ -844,59 +962,55 @@
 
   function renderProjectsList(projects) {
     if (!projects.length) {
-      return '<p class="hint">По текущему запросу проекты не найдены.</p>';
+      return `
+        <div class="empty-state project-empty-state">
+          <div class="empty-state-mark" aria-hidden="true">⌕</div>
+          <h3>${state.projectSearch ? "Ничего не найдено" : "Пока нет проектов"}</h3>
+          <p>${state.projectSearch ? "Измените запрос или очистите поле поиска." : "Создайте проект, чтобы собрать домены, запуски и результаты в одном месте."}</p>
+          ${state.projectSearch ? "" : '<a class="btn btn-primary" href="#project-create-input">Создать первый проект</a>'}
+        </div>
+      `;
     }
 
     const cards = projects
       .map((project, index) => {
         const lastRun = project.lastRun;
-        const statusText = lastRun
-          ? `${escapeHtml(lastRun.type)} · ${escapeHtml(lastRun.status)}`
-          : "Нет запусков";
+        const statusLabel = {
+          RUNNING: "Выполняется", QUEUED: "В очереди", SUCCESS: "Завершён",
+          DONE: "Завершён", FAILED: "Ошибка", ERROR: "Ошибка", CANCELLED: "Остановлен",
+        }[lastRun?.status] || "Ещё не запускали";
+        const statusText = lastRun ? statusLabel : "Новый проект";
         const statusClass = lastRun
           ? { RUNNING: "pill-running", QUEUED: "pill-queued", FAILED: "pill-failed", DONE: "pill-done", SUCCESS: "pill-done", ERROR: "pill-failed", CANCELLED: "pill-failed" }[lastRun.status] || "pill-done"
-          : "";
+          : "pill-new";
         const subdomainsCount = Number(project.counts && project.counts.subdomains) || 0;
         const runsCount = Number(project.counts && project.counts.runs) || 0;
-        const reviewMinutes = Math.max(1, Math.ceil(subdomainsCount / 220));
         const createdAt = formatDate(project.createdAt);
         const domains = formatProjectDomains(project);
         const projectName = getProjectDisplayName(project);
-        const lead = domains.length
-          ? `Пассивные источники, DNS-резолв и история запусков.`
-          : `Готов к наполнению доменами, сканами и результатами.`;
         const domainsMeta = domains.length > 1
-          ? `${domains.length} домена: ${domains.join(", ")}`
-          : `${domains[0] || "Домен пока не добавлен"}`;
+          ? `${domains.length} домена · ${domains.join(", ")}`
+          : `${domains[0] || "Добавьте первый домен"}`;
+        const runType = {
+          PASSIVE_SCAN: "Пассивный сбор", DNS_RESOLVE: "DNS-проверка", ASN_LOOKUP: "Поиск ASN",
+        }[lastRun?.type] || lastRun?.type || "";
 
         return `
           <a class="project-card" href="/projects/${encodeURIComponent(project.id)}" data-link style="--card-stagger:${40 + ((index % 8) * 40)}ms">
             <div class="project-card-main">
-              <div class="meta">
-                <span>${escapeHtml(createdAt)}</span>
+              <div class="project-card-topline">
                 <span class="pill tiny ${statusClass}">${statusText}</span>
+                <span class="project-card-date">Создан ${escapeHtml(createdAt)}</span>
               </div>
-              <div class="project-title mono">${escapeHtml(projectName)}</div>
-              <div class="project-lead">${escapeHtml(lead)}</div>
-              <div class="hint mono">${escapeHtml(domainsMeta)}</div>
-              <div class="project-insight">
-                ${subdomainsCount} активов · ${runsCount} запусков · ${reviewMinutes} мин на просмотр
+              <h3 class="project-title">${escapeHtml(projectName)}</h3>
+              <div class="project-domain-summary mono">${escapeHtml(domainsMeta)}</div>
+              <div class="project-card-metrics" aria-label="Сводка проекта">
+                <span><strong>${subdomainsCount.toLocaleString("ru-RU")}</strong> хостов</span>
+                <span><strong>${runsCount.toLocaleString("ru-RU")}</strong> запусков</span>
               </div>
-            </div>
-            <div class="project-preview" aria-hidden="true">
-              <div class="project-mini-stats">
-                <div class="project-mini-stat">
-                  <span class="project-mini-stat-value mono">${subdomainsCount}</span>
-                  <span class="project-mini-stat-label">поддоменов</span>
-                </div>
-                <div class="project-mini-stat">
-                  <span class="project-mini-stat-value mono">${runsCount}</span>
-                  <span class="project-mini-stat-label">запусков</span>
-                </div>
-                <div class="project-mini-stat">
-                  <span class="project-mini-stat-value mono">${reviewMinutes}</span>
-                  <span class="project-mini-stat-label">мин просмотр</span>
-                </div>
+              <div class="project-card-footer">
+                <span class="project-last-run">${lastRun ? `Последний запуск: ${escapeHtml(runType)}` : "Запустите первый сбор данных"}</span>
+                <span class="project-open-label">Открыть <span aria-hidden="true">→</span></span>
               </div>
             </div>
           </a>
@@ -925,29 +1039,27 @@
 
     appEl.innerHTML = `
       <div class="stack-xl">
-        <section class="hero panel">
-          <h1>Управление разведкой</h1>
-          <p>Создавайте проект по названию, добавляйте домены внутри и запускайте сканы с сохранением результатов.</p>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Новый проект</h2>
-            <p>Домен можно добавить позже уже внутри проекта.</p>
+        <section class="hero panel projects-hero">
+          <div>
+            <span class="page-kicker">РАБОЧЕЕ ПРОСТРАНСТВО</span>
+            <h1>Проекты</h1>
+            <p>Каждое расследование — домены, задачи и найденные данные в одном месте.</p>
           </div>
           <form id="project-create-form">
             <div id="project-create-message"></div>
-            <input id="project-create-input" class="text-input" type="text" placeholder="Название проекта" />
-            <div class="row">
-              <button class="btn btn-primary" id="project-create-submit" type="submit">Создать проект</button>
-            </div>
+            <label class="visually-hidden" for="project-create-input">Название проекта</label>
+            <input id="project-create-input" class="text-input" type="text" placeholder="Например, example.com" aria-label="Название проекта" required />
+            <button class="btn btn-primary" id="project-create-submit" type="submit">Создать проект</button>
           </form>
         </section>
 
-        <section class="panel">
+        <section class="panel projects-section">
           <div class="panel-header">
-            <h2>Проекты</h2>
-            <p id="projects-count-text"></p>
+            <div>
+              <h2>Все расследования</h2>
+              <p id="projects-count-text"></p>
+            </div>
+            <span class="projects-search-hint">Фильтр по названию и домену — в строке поиска сверху</span>
           </div>
           <div id="projects-list-root"></div>
         </section>
@@ -969,7 +1081,7 @@
         : allProjects;
 
       if (projectsCountEl) {
-        projectsCountEl.textContent = `${projects.length}${searchNeedle ? ` / ${allProjects.length}` : ""} проектов`;
+        projectsCountEl.textContent = `${projects.length}${searchNeedle ? ` из ${allProjects.length}` : ""} ${projects.length === 1 ? "проект" : projects.length > 1 && projects.length < 5 ? "проекта" : "проектов"}`;
       }
       if (projectsListRoot) {
         projectsListRoot.innerHTML = renderProjectsList(projects);
@@ -1001,11 +1113,10 @@
           body: { name },
         });
 
-        messageEl.innerHTML = renderSuccessBanner(
-          `Проект "${getProjectDisplayName(result.project)}" создан`,
-        );
-
-        await renderProjectsPage();
+        if (!result?.project?.id) {
+          throw new Error("Сервер не вернул созданный проект");
+        }
+        navigate(`/projects/${encodeURIComponent(result.project.id)}`);
       } catch (error) {
         messageEl.innerHTML = renderErrorBanner(
           friendlyError(error, "Не удалось сохранить проекты"),
@@ -2623,6 +2734,7 @@
     let hideUnresolvedSubdomains = false;
     const completedDataRefreshKeys = new Set();
     let disposed = false;
+    const projectDomainCount = projectDomains.length;
     const projectDomainsMarkup = projectDomains
       .map((domain) => `<span class="pill mono">${escapeHtml(domain)}</span>`)
       .join("");
@@ -2658,28 +2770,61 @@
               <div class="project-hero-copy">
                 <div class="pill">Проект</div>
                 <h1>${escapeHtml(projectName)}</h1>
-                <p>Рабочая область для доменов, сканов, IntelX, WebArchive и связанных находок.</p>
+                <p>Домены, запуски и результаты этого расследования.</p>
               </div>
               <div class="project-hero-stats">
                 ${projectStatCards}
               </div>
             </div>
-            <div class="project-domain-strip">
-              ${projectDomainsMarkup || '<span class="hint">Домены пока не добавлены.</span>'}
-            </div>
-            <form id="project-domain-form" class="project-domain-form">
-              <div class="row wrap project-domain-form-row">
-                <input id="project-domain-input" class="text-input mono" type="text" placeholder="Добавить домен в этот проект" />
-                <button class="btn btn-secondary" id="project-domain-submit" type="submit">Добавить домен</button>
+            <section class="project-domains-section" aria-labelledby="project-domains-heading">
+              <div class="project-domains-heading">
+                <h2 id="project-domains-heading">Домены</h2>
+                <span class="pill tiny">${projectDomainCount}</span>
               </div>
-            </form>
-            <div class="row wrap project-domain-form-row">
-              <button class="btn btn-ghost" id="export-all-btn" type="button">Скачать всё</button>
-              <button class="btn btn-danger" id="delete-project-btn" type="button">Удалить проект</button>
-              <div id="export-all-message" style="font-size:0.85rem;align-self:center;"></div>
-            </div>
+              <div class="project-domain-strip">
+                ${projectDomainsMarkup || '<span class="hint">Добавьте домен, чтобы начать сбор данных.</span>'}
+              </div>
+              <form id="project-domain-form" class="project-domain-form">
+                <div class="row wrap project-domain-form-row">
+                  <label class="visually-hidden" for="project-domain-input">Домен для проекта</label>
+                  <input id="project-domain-input" class="text-input mono" type="text" placeholder="example.ru" />
+                  <button class="btn btn-primary btn-add-domain" id="project-domain-submit" type="submit" aria-label="Добавить домен" title="Добавить домен">${ICON_PLUS}<span class="visually-hidden">Добавить домен</span></button>
+                </div>
+              </form>
+            </section>
+            <details class="project-danger-zone">
+              <summary>Удалить проект</summary>
+              <p>Проект и собранные данные будут удалены без возможности восстановления.</p>
+              <button class="btn btn-danger" id="delete-project-btn" type="button">Удалить проект и данные</button>
+            </details>
             <div id="project-action-message"></div>
           </section>
+
+          <nav class="tool-nav" aria-label="Инструменты проекта">
+            <div class="tool-nav-group">
+              <div class="tool-nav-group-label">Обнаружение</div>
+              <button class="btn btn-primary" id="tab-subdomains-btn" type="button">${ICON_SUBDOMAINS}<span>Поддомены</span></button>
+              <button class="btn btn-ghost" id="tab-whois-btn" type="button">${ICON_GLOBE}<span>WHOIS · ИНН · 2ip</span></button>
+              <button class="btn btn-ghost" id="tab-webarchive-btn" type="button">${ICON_ARCHIVE}<span>WebArchive</span></button>
+              <button class="btn btn-ghost" id="tab-dork-stats-btn" type="button" hidden>${ICON_SEARCH}<span>Дорки</span></button>
+            </div>
+            <div class="tool-nav-group">
+              <div class="tool-nav-group-label">Разведка</div>
+              <button class="btn btn-ghost" id="tab-emails-btn" type="button">${ICON_MAIL}<span>Почты</span></button>
+              <button class="btn btn-ghost" id="tab-intelx-btn" type="button">${ICON_LAYERS}<span>IntelX</span></button>
+              <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">${ICON_SHIELD}<span>VT Deep</span></button>
+            </div>
+            <div class="tool-nav-group">
+              <div class="tool-nav-group-label">Инфраструктура</div>
+              <button class="btn btn-ghost" id="tab-asn-btn" type="button">${ICON_ASN}<span>ASN</span></button>
+              <button class="btn btn-ghost" id="tab-nmap-btn" type="button">${ICON_TERMINAL}<span>Nmap</span></button>
+            </div>
+            <div class="tool-nav-group">
+              <div class="tool-nav-group-label">Проект</div>
+              <button class="btn btn-ghost" id="tab-ready-btn" type="button">${ICON_CHECK_CIRCLE}<span>Готовность</span></button>
+              <button class="btn btn-ghost" id="tab-labor-btn" type="button">${ICON_CLOCK}<span>Трудозатраты</span></button>
+            </div>
+          </nav>
         </div>
 
         <div class="project-column project-column-right">
@@ -2688,52 +2833,66 @@
               <h2>Данные</h2>
               <p id="subdomains-status-text">Автообновление каждые 3 с при активных запусках.</p>
             </div>
-            <div class="row wrap project-data-tabs">
-              <button class="btn btn-primary" id="tab-subdomains-btn" type="button">Поддомены</button>
-              <button class="btn btn-ghost" id="tab-whois-btn" type="button">WHOIS</button>
-              <button class="btn btn-ghost" id="tab-webarchive-btn" type="button">WebArchive</button>
-              <button class="btn btn-ghost" id="tab-dork-stats-btn" type="button" hidden>Дорки</button>
-              <button class="btn btn-ghost" id="tab-emails-btn" type="button">УЗ</button>
-              <button class="btn btn-ghost" id="tab-vtdeep-btn" type="button">VT Deep</button>
-              <button class="btn btn-ghost" id="tab-intelx-btn" type="button">IntelX</button>
-              <button class="btn btn-ghost" id="tab-asn-btn" type="button">ASN</button>
-              <button class="btn btn-ghost" id="tab-ready-btn" type="button">Готовность</button>
-              <button class="btn btn-ghost" id="tab-nmap-btn" type="button">Nmap</button>
-              <button class="btn btn-ghost" id="tab-labor-btn" type="button">Трудозатраты</button>
-            </div>
             <div id="subdomains-panel" class="project-data-panel">
             <div class="stack-md project-data-toolbar-stack">
-              <div class="row wrap project-panel-toolbar subdomains-scan-toolbar">
-                <input id="subdomains-search-input" class="text-input mono" type="search" placeholder="Поиск по поддоменам на текущей странице" />
-                <label class="toggle">
-                  <input id="subdomains-hide-unresolved" type="checkbox" />
-                  Скрыть нерезолвленные
-                </label>
-                <button class="btn btn-primary" id="run-passive-all-btn" type="button">Запустить скан (всё)</button>
-                <button class="btn btn-secondary" id="run-resolve-fast-btn" type="button">DNS-резолв (быстрый)</button>
-                <button class="btn btn-ghost" id="run-resolve-extended-btn" type="button">DNS-резолв (расширенный)</button>
+              <div class="toolbar-row project-panel-toolbar">
+                <div class="toolbar-cluster toolbar-cluster-fill">
+                  <input id="subdomains-search-input" class="text-input mono" type="search" placeholder="Поиск по поддоменам на текущей странице" />
+                  <label class="toggle">
+                    <input id="subdomains-hide-unresolved" type="checkbox" />
+                    Скрыть нерезолвленные
+                  </label>
+                </div>
+                <div class="toolbar-cluster">
+                  <button class="btn btn-primary" id="run-passive-all-btn" type="button">${ICON_PLAY}<span>Запустить скан (всё)</span></button>
+                  <button class="btn btn-secondary" id="run-resolve-fast-btn" type="button">${ICON_REFRESH}<span>DNS-резолв (быстрый)</span></button>
+                  <button class="btn btn-ghost" id="run-resolve-extended-btn" type="button">${ICON_REFRESH}<span>DNS-резолв (расширенный)</span></button>
+                </div>
               </div>
-              <div class="row wrap project-panel-toolbar subdomains-export-toolbar">
-                <button class="btn btn-secondary" id="export-domain-ip-csv-btn" type="button">Экспорт CSV domain;ip</button>
-                <button class="btn btn-ghost" id="subdomains-export-table-csv-btn" type="button">Экспорт таблицы CSV</button>
+              <div class="toolbar-row project-panel-toolbar">
+                <div class="toolbar-cluster">
+                  <button class="btn btn-ghost" id="export-domain-ip-csv-btn" type="button">${ICON_DOWNLOAD}<span>CSV domain;ip</span></button>
+                  <button class="btn btn-ghost" id="subdomains-export-table-csv-btn" type="button">${ICON_DOWNLOAD}<span>CSV таблица</span></button>
+                </div>
               </div>
             </div>
             <form id="subdomain-create-form">
-              <div class="row wrap project-panel-toolbar">
-                <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
-                <button class="btn btn-primary" id="subdomain-create-btn" type="submit">Добавить поддомен</button>
-                <button class="btn btn-secondary" id="resolve-selected-btn" type="button" title="Только A/AAAA">Резолв (быстрый)</button>
-                <button class="btn btn-secondary" id="run-full-dns-btn" type="button" title="A, MX, TXT, NS, CNAME">Массовый nslookup</button>
-                <button class="btn btn-secondary" id="run-netlas-dns-btn" type="button">Netlas DNS (массово)</button>
-                <select id="selected-scan-provider" class="text-input mono" aria-label="Провайдер для скана выбранных">
-                  ${selectedScanProviderOptions}
-                </select>
-                <button class="btn btn-secondary" id="scan-selected-provider-btn" type="button">Скан выбранных</button>
-                <button class="btn btn-secondary" id="scan-root-hosts-provider-btn" type="button">Скан root-хостов</button>
-                <button class="btn btn-danger" id="delete-selected-btn" type="button">Удалить выбранные</button>
-                <button class="btn btn-secondary" id="export-selected-csv-btn" type="button">Экспорт выбранных</button>
-                <button class="btn btn-danger" id="clear-unresolved-btn" type="button">Очистить нерезолвленные</button>
-                <button class="btn btn-danger" id="subdomain-delete-all-btn" type="button">Удалить все</button>
+              <div class="stack-md">
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster toolbar-cluster-fill">
+                    <input id="subdomain-create-host" class="text-input mono" type="text" placeholder="${escapeHtml(primaryDomain ? `new.${primaryDomain}` : "sub.example.com")}" />
+                    <button class="btn btn-primary" id="subdomain-create-btn" type="submit">${ICON_PLUS}<span>Добавить поддомен</span></button>
+                  </div>
+                </div>
+                <button class="btn btn-ghost bulk-actions-toggle" id="subdomain-bulk-toggle" type="button" aria-expanded="false">
+                  ${ICON_CHEVRON_DOWN}<span>Массовые действия с выбранными</span>
+                </button>
+                <div class="stack-md" id="subdomain-bulk-actions" hidden>
+                  <div class="toolbar-row project-panel-toolbar">
+                    <div class="toolbar-cluster">
+                      <button class="btn btn-secondary" id="resolve-selected-btn" type="button" title="Только A/AAAA">${ICON_REFRESH}<span>Резолв (быстрый)</span></button>
+                      <button class="btn btn-secondary" id="run-full-dns-btn" type="button" title="A, MX, TXT, NS, CNAME">${ICON_REFRESH}<span>Массовый nslookup</span></button>
+                      <button class="btn btn-secondary" id="run-netlas-dns-btn" type="button">${ICON_REFRESH}<span>Netlas DNS (массово)</span></button>
+                    </div>
+                  </div>
+                  <div class="toolbar-row project-panel-toolbar">
+                    <div class="toolbar-cluster">
+                      <select id="selected-scan-provider" class="text-input mono" aria-label="Провайдер для скана выбранных" style="width:auto;">
+                        ${selectedScanProviderOptions}
+                      </select>
+                      <button class="btn btn-secondary" id="scan-selected-provider-btn" type="button">${ICON_PLAY}<span>Скан выбранных</span></button>
+                      <button class="btn btn-secondary" id="scan-root-hosts-provider-btn" type="button">${ICON_PLAY}<span>Скан root-хостов</span></button>
+                    </div>
+                  </div>
+                  <div class="toolbar-row project-panel-toolbar">
+                    <div class="toolbar-cluster toolbar-cluster-danger">
+                      <button class="btn btn-ghost" id="export-selected-csv-btn" type="button">${ICON_DOWNLOAD}<span>Экспорт выбранных</span></button>
+                      <button class="btn btn-danger" id="delete-selected-btn" type="button">${ICON_DELETE}<span>Удалить выбранные</span></button>
+                      <button class="btn btn-danger" id="clear-unresolved-btn" type="button">${ICON_DELETE}<span>Очистить нерезолвленные</span></button>
+                      <button class="btn btn-danger" id="subdomain-delete-all-btn" type="button">${ICON_DELETE}<span>Удалить все</span></button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </form>
             <div id="subdomain-action-message"></div>
@@ -2742,47 +2901,59 @@
             <div id="whois-panel" class="project-data-panel" hidden>
               <div class="whois-block">
                 <div class="panel-header">
-                  <h3>WHOIS</h3>
+                  <h3>${ICON_GLOBE}<span>WHOIS</span></h3>
                   <p>Снимок корневого домена</p>
                 </div>
-                <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-secondary" id="run-whois-btn" type="button">Распознать WHOIS</button>
-                  <button class="btn btn-ghost" id="whois-export-csv-btn" type="button">Экспорт CSV</button>
-                  <button class="btn btn-secondary" id="whois-find-org-domains-btn" type="button" style="display:none">Найти домены организации (Netlas)</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-secondary" id="run-whois-btn" type="button">${ICON_REFRESH}<span>Распознать WHOIS</span></button>
+                    <button class="btn btn-secondary" id="whois-find-org-domains-btn" type="button" style="display:none">${ICON_SEARCH}<span>Найти домены организации (Netlas)</span></button>
+                  </div>
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-ghost" id="whois-export-csv-btn" type="button">${ICON_DOWNLOAD}<span>Экспорт CSV</span></button>
+                  </div>
                 </div>
                 <textarea id="whois-info-field" class="text-input mono" rows="4" readonly placeholder="Здесь появится WHOIS-информация"></textarea>
                 <div id="whois-org-domains-result" style="margin-top:12px; display:none;"></div>
               </div>
-              <div class="whois-block" style="margin-top: 20px;">
+              <div class="whois-block">
                 <div class="panel-header">
-                  <h3>Поиск доменов по ИНН</h3>
+                  <h3>${ICON_ID_CARD}<span>Поиск доменов по ИНН</span></h3>
                   <p>ЕГРЮЛ → агрегация из List-Org, Netlas, ViewDNS, crt.sh (+ Checko/DaData/WhoisFreaks по API-ключам)</p>
                 </div>
-                <div class="row wrap project-panel-toolbar">
-                  <input type="text" id="inn-search-input" class="text-input mono" placeholder="ИНН (10 или 12 цифр)" style="max-width:220px" />
-                  <button class="btn btn-secondary" id="inn-search-btn" type="button">Найти домены</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <input type="text" id="inn-search-input" class="text-input mono" placeholder="ИНН (10 или 12 цифр)" style="max-width:220px" />
+                    <button class="btn btn-secondary" id="inn-search-btn" type="button">${ICON_SEARCH}<span>Найти домены</span></button>
+                  </div>
                 </div>
                 <div id="inn-search-result" style="margin-top:12px; display:none;"></div>
               </div>
-              <div class="whois-block" style="margin-top: 20px;">
+              <div class="whois-block">
                 <div class="panel-header">
-                  <h3>2ip</h3>
+                  <h3>${ICON_PIN}<span>2ip</span></h3>
                   <p>Geo, провайдер, хостинг</p>
                 </div>
-                <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-secondary" id="run-2ip-btn" type="button">Загрузить 2ip</button>
-                  <button class="btn btn-ghost" id="refresh-2ip-btn" type="button">Обновить</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-secondary" id="run-2ip-btn" type="button">${ICON_PLAY}<span>Загрузить 2ip</span></button>
+                    <button class="btn btn-ghost" id="refresh-2ip-btn" type="button">${ICON_REFRESH}<span>Обновить</span></button>
+                  </div>
                 </div>
                 <div id="2ip-result" class="hint" style="margin-top:8px;"></div>
               </div>
             </div>
             <div id="webarchive-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
-                <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-primary" id="run-webarchive-btn" type="button">Запустить задачу WebArchive</button>
-                  <button class="btn btn-secondary" id="webarchive-load-btn" type="button">Загрузить WebArchive</button>
-                  <button class="btn btn-ghost" id="webarchive-refresh-metadata-btn" type="button">Переизвлечь метаданные</button>
-                  <button class="btn btn-ghost" id="webarchive-export-csv-btn" type="button">Экспорт CSV</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-primary" id="run-webarchive-btn" type="button">${ICON_PLAY}<span>Запустить задачу WebArchive</span></button>
+                    <button class="btn btn-secondary" id="webarchive-load-btn" type="button">${ICON_REFRESH}<span>Загрузить WebArchive</span></button>
+                    <button class="btn btn-ghost" id="webarchive-refresh-metadata-btn" type="button">${ICON_REFRESH}<span>Переизвлечь метаданные</span></button>
+                  </div>
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-ghost" id="webarchive-export-csv-btn" type="button">${ICON_DOWNLOAD}<span>Экспорт CSV</span></button>
+                  </div>
                 </div>
                 <div class="hint">Ищет URL и документы из Wayback для доменов проекта и извлекает метаданные из PDF, DOC и DOCX.</div>
               </div>
@@ -2791,12 +2962,16 @@
             </div>
             <div id="emails-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
-                <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-primary" id="emails-add-btn" type="button">Добавить УЗ</button>
-                  <button class="btn btn-danger" id="emails-delete-selected-btn" type="button">Удалить выбранные</button>
-                  <button class="btn btn-ghost" id="emails-edit-selected-btn" type="button">Изменить выбранный</button>
-                  <button class="btn btn-secondary" id="emails-refresh-btn" type="button">Обновить УЗ</button>
-                  <button class="btn btn-ghost" id="emails-export-csv-btn" type="button">Экспорт CSV УЗ</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-primary" id="emails-add-btn" type="button">${ICON_PLUS}<span>Добавить адрес</span></button>
+                    <button class="btn btn-secondary" id="emails-refresh-btn" type="button">${ICON_REFRESH}<span>Обновить данные</span></button>
+                    <button class="btn btn-ghost" id="emails-edit-selected-btn" type="button">${ICON_EDIT}<span>Изменить выбранный</span></button>
+                  </div>
+                  <div class="toolbar-cluster toolbar-cluster-danger">
+                    <button class="btn btn-ghost" id="emails-export-csv-btn" type="button">${ICON_DOWNLOAD}<span>Скачать CSV</span></button>
+                    <button class="btn btn-danger" id="emails-delete-selected-btn" type="button">${ICON_DELETE}<span>Удалить выбранные</span></button>
+                  </div>
                 </div>
                 <div class="hint">Агрегирует почты и связанные найденные данные из IntelX, WebArchive и WHOIS.</div>
               </div>
@@ -2838,9 +3013,13 @@
               <div id="dork-stats-table-root"></div>
             </div>
             <div id="vtdeep-panel" class="project-data-panel" hidden>
-              <div class="row wrap project-panel-toolbar">
-                <button class="btn btn-secondary" id="vtdeep-load-btn" type="button">Загрузить данные VT Deep</button>
-                <button class="btn btn-ghost" id="vtdeep-export-csv-btn" type="button">Экспорт CSV</button>
+              <div class="toolbar-row project-panel-toolbar">
+                <div class="toolbar-cluster">
+                  <button class="btn btn-secondary" id="vtdeep-load-btn" type="button">${ICON_REFRESH}<span>Загрузить данные VT Deep</span></button>
+                </div>
+                <div class="toolbar-cluster">
+                  <button class="btn btn-ghost" id="vtdeep-export-csv-btn" type="button">${ICON_DOWNLOAD}<span>Экспорт CSV</span></button>
+                </div>
               </div>
               <div id="vtdeep-action-message"></div>
               <div id="vtdeep-table-root"></div>
@@ -2852,12 +3031,16 @@
                   <textarea id="intelx-custom-query" class="text-input mono" rows="3" placeholder="Например: &quot;site:example.com&quot; или произвольный IntelX запрос">${escapeHtml(initialIntelxCustomQuery)}</textarea>
                   <div class="hint">Если поле пустое, IntelX будет искать по доменам проекта.</div>
                 </div>
-                <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-primary" id="run-intelx-btn" type="button">Запустить задачу IntelX</button>
-                  <button class="btn btn-secondary" id="intelx-load-btn" type="button">Запустить IntelX</button>
-                  <button class="btn btn-ghost" id="intelx-edit-selected-btn" type="button">Изменить выбранный</button>
-                  <button class="btn btn-danger" id="intelx-delete-selected-btn" type="button">Удалить выбранные</button>
-                  <button class="btn btn-ghost" id="intelx-export-csv-btn" type="button">Экспорт CSV</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-primary" id="run-intelx-btn" type="button">${ICON_PLAY}<span>Запустить задачу IntelX</span></button>
+                    <button class="btn btn-secondary" id="intelx-load-btn" type="button">${ICON_REFRESH}<span>Запустить IntelX</span></button>
+                    <button class="btn btn-ghost" id="intelx-edit-selected-btn" type="button">${ICON_EDIT}<span>Изменить выбранный</span></button>
+                  </div>
+                  <div class="toolbar-cluster toolbar-cluster-danger">
+                    <button class="btn btn-ghost" id="intelx-export-csv-btn" type="button">${ICON_DOWNLOAD}<span>Экспорт CSV</span></button>
+                    <button class="btn btn-danger" id="intelx-delete-selected-btn" type="button">${ICON_DELETE}<span>Удалить выбранные</span></button>
+                  </div>
                 </div>
               </div>
               <div id="intelx-action-message"></div>
@@ -2865,11 +3048,15 @@
             </div>
             <div id="asn-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
-                <div class="row wrap project-panel-toolbar">
-                  <button class="btn btn-primary" id="run-asn-btn" type="button">Запустить ASN-лукап</button>
-                  <button class="btn btn-danger" id="asn-delete-selected-btn" type="button">Удалить выбранные ASN</button>
-                  <button class="btn btn-danger" id="asn-clear-btn" type="button">Очистить ASN</button>
-                  <button class="btn btn-ghost" id="asn-export-csv-btn" type="button">Экспорт CSV</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <button class="btn btn-primary" id="run-asn-btn" type="button">${ICON_PLAY}<span>Запустить ASN-лукап</span></button>
+                  </div>
+                  <div class="toolbar-cluster toolbar-cluster-danger">
+                    <button class="btn btn-ghost" id="asn-export-csv-btn" type="button">${ICON_DOWNLOAD}<span>Экспорт CSV</span></button>
+                    <button class="btn btn-danger" id="asn-delete-selected-btn" type="button">${ICON_DELETE}<span>Удалить выбранные ASN</span></button>
+                    <button class="btn btn-danger" id="asn-clear-btn" type="button">${ICON_DELETE}<span>Очистить ASN</span></button>
+                  </div>
                 </div>
                 <div class="hint">Определяет ASN-зоны через Team Cymru и URL компаний-владельцев через 2ip.io.</div>
               </div>
@@ -2881,13 +3068,15 @@
             </div>
             <div id="ready-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
-                <div class="row wrap project-panel-toolbar">
-                  <label class="toggle">
-                    <input type="checkbox" id="ready-mode-toggle" ${readyModeEnabled ? "checked" : ""} />
-                    Готовый проект
-                  </label>
-                  <button class="btn btn-primary" id="ready-check-run-btn" type="button" ${readyModeEnabled ? "" : "disabled"}>Проверить доступность</button>
-                  <button class="btn btn-ghost" id="ready-check-refresh-btn" type="button">Обновить</button>
+                <div class="toolbar-row project-panel-toolbar">
+                  <div class="toolbar-cluster">
+                    <label class="toggle">
+                      <input type="checkbox" id="ready-mode-toggle" ${readyModeEnabled ? "checked" : ""} />
+                      Готовый проект
+                    </label>
+                    <button class="btn btn-primary" id="ready-check-run-btn" type="button" ${readyModeEnabled ? "" : "disabled"}>${ICON_CHECK_CIRCLE}<span>Проверить доступность</span></button>
+                    <button class="btn btn-ghost" id="ready-check-refresh-btn" type="button">${ICON_REFRESH}<span>Обновить</span></button>
+                  </div>
                 </div>
                 <div class="hint">Активный режим: выполняет curl-like HTTP/HTTPS проверки доступности доменов и поддоменов проекта.</div>
               </div>
@@ -2933,8 +3122,6 @@
     const nmapExportIpsBtn = document.getElementById("nmap-export-ips-btn");
     const nmapExportSubdomainsBtn = document.getElementById("nmap-export-subdomains-btn");
     const subdomainsExportTableCsvBtn = document.getElementById("subdomains-export-table-csv-btn");
-    const exportAllBtn = document.getElementById("export-all-btn");
-    const exportAllMessageEl = document.getElementById("export-all-message");
     const deleteProjectBtn = document.getElementById("delete-project-btn");
     const actionMessageEl = document.getElementById("project-action-message");
     const projectDomainForm = document.getElementById("project-domain-form");
@@ -2985,6 +3172,8 @@
     const subdomainCreateForm = document.getElementById("subdomain-create-form");
     const subdomainCreateHostInput = document.getElementById("subdomain-create-host");
     const subdomainCreateBtn = document.getElementById("subdomain-create-btn");
+    const subdomainBulkToggle = document.getElementById("subdomain-bulk-toggle");
+    const subdomainBulkActions = document.getElementById("subdomain-bulk-actions");
     const resolveSelectedBtn = document.getElementById("resolve-selected-btn");
     const selectedScanProviderSelect = document.getElementById("selected-scan-provider");
     const scanSelectedProviderBtn = document.getElementById("scan-selected-provider-btn");
@@ -4363,60 +4552,6 @@
       exportRowsCsv(projectCsvFileName("webarchive"), headers, rows, "WebArchive данных для экспорта нет", setWebarchiveMessage);
     }
 
-    async function exportAllData() {
-      exportAllBtn.disabled = true;
-      exportAllMessageEl.textContent = "Загрузка данных...";
-      exportAllMessageEl.style.color = "var(--text-faint)";
-
-      const missing = [];
-
-      // Load anything not yet in memory
-      await Promise.allSettled([
-        emailData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/emails`).then((p) => { emailData = p; }).catch(() => missing.push("УЗ")),
-        vtDeepData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/vt-deep`).then((p) => { if (p && !p.error) vtDeepData = p; }).catch(() => {}),
-        intelxData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/intelx-leaks`).then((p) => { if (p && !p.error) intelxData = p; }).catch(() => {}),
-        webarchiveData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/webarchive`).then((p) => { if (p && !p.error) webarchiveData = p; }).catch(() => {}),
-        dorkStatsData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/dork-stats`).then((p) => { if (p && !p.error) dorkStatsData = p; }).catch(() => {}),
-        asnData ? null : api(`/api/projects/${encodeURIComponent(projectId)}/asn`).then((p) => { if (p && p.result) asnData = p.result; }).catch(() => {}),
-      ].filter(Boolean));
-
-      exportAllMessageEl.textContent = "Скачивание файлов...";
-
-      const tasks = [
-        // domain;ip через серверный endpoint — самый полный список поддоменов
-        async () => {
-          const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/export/domain-ip.csv`, { credentials: "same-origin" });
-          if (!resp.ok) return;
-          const blob = await resp.blob();
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = projectCsvFileName("domain-ip");
-          a.click();
-          URL.revokeObjectURL(a.href);
-        },
-        () => exportSubdomainsTableCsv(),
-        () => exportEmailsCsv(),
-        () => exportIntelxCsv(),
-        () => exportWebArchiveCsv(),
-        () => exportVtDeepCsv(),
-        () => exportDorkStatsCsv(),
-        () => exportAsnCsv(),
-        () => exportWhoisCsv(),
-      ];
-
-      let count = 0;
-      for (let i = 0; i < tasks.length; i++) {
-        if (i > 0) await new Promise((r) => setTimeout(r, 350));
-        try { await tasks[i](); count++; } catch { /* skip */ }
-      }
-
-      exportAllBtn.disabled = false;
-      const note = missing.length ? ` (не загружены: ${missing.join(", ")})` : "";
-      exportAllMessageEl.textContent = `Готово${note}`;
-      exportAllMessageEl.style.color = missing.length ? "var(--color-warn, #f4a261)" : "var(--color-success, #53d89d)";
-      setTimeout(() => { exportAllMessageEl.textContent = ""; }, 4000);
-    }
-
     runsTableRoot.addEventListener("click", async (event) => {
       const selectButton = closestAction(event.target, "select-run");
       if (selectButton && runsTableRoot.contains(selectButton)) {
@@ -4793,7 +4928,6 @@
     webarchiveExportCsvBtn.addEventListener("click", exportWebArchiveCsv);
     dorkStatsExportCsvBtn.addEventListener("click", exportDorkStatsCsv);
     intelxExportCsvBtn.addEventListener("click", exportIntelxCsv);
-    exportAllBtn.addEventListener("click", () => { void exportAllData(); });
 
     function openDork(engine, query) {
       if (!primaryDomain || !query) {
@@ -5501,6 +5635,13 @@
       }
     });
 
+    subdomainBulkToggle.addEventListener("click", () => {
+      const willShow = subdomainBulkActions.hidden;
+      subdomainBulkActions.hidden = !willShow;
+      subdomainBulkToggle.classList.toggle("is-open", willShow);
+      subdomainBulkToggle.setAttribute("aria-expanded", String(willShow));
+    });
+
     subdomainCreateForm.addEventListener("submit", async (event) => {
       event.preventDefault();
 
@@ -5859,9 +6000,9 @@
             <td>
               <div>${escapeHtml(provider.description || "-")}</div>
               ${Array.isArray(provider.helpLinks) && provider.helpLinks.length > 0
-                ? `<div class="row row-no-margin wrap" style="gap: 8px; margin-top: 6px;">
+                ? `<div class="provider-help-links">
                     ${provider.helpLinks.map(link => `
-                      <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost" style="font-size: 11px; padding: 2px 8px; border: 1px solid var(--accent); color: var(--accent); border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+                      <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" class="provider-help-link">
                         ${escapeHtml(link.text)} ↗
                       </a>
                     `).join("")}
@@ -6216,7 +6357,7 @@
         (user) => `
           <tr class="admin-user-row" data-user-id="${escapeHtml(user.id)}">
             <td>
-              <div>${escapeHtml(user.email)}</div>
+              <div>${escapeHtml(user.login || user.email)}</div>
               <div class="hint mono">${escapeHtml(user.id)}</div>
             </td>
             <td>
@@ -6262,8 +6403,8 @@
             <div id="create-user-message"></div>
             <div class="auth-grid">
               <div class="field">
-                <label for="create-user-email">Почта</label>
-                <input id="create-user-email" class="text-input" type="email" required />
+                <label for="create-user-login">Логин</label>
+                <input id="create-user-login" class="text-input" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32" pattern="[a-zA-Z0-9._-]+" required />
               </div>
               <div class="field">
                 <label for="create-user-password">Пароль</label>
@@ -6292,7 +6433,7 @@
             <table class="table">
               <thead>
                 <tr>
-                  <th>Почта</th>
+                  <th>Логин</th>
                   <th>Роль</th>
                   <th>Активен</th>
                   <th>Сброс пароля</th>
@@ -6317,13 +6458,13 @@
       createMessage.innerHTML = "";
 
       try {
-        const email = document.getElementById("create-user-email").value.trim();
+        const login = document.getElementById("create-user-login").value.trim();
         const password = document.getElementById("create-user-password").value;
         const role = document.getElementById("create-user-role").value;
 
         await api("/api/admin/users", {
           method: "POST",
-          body: { email, password, role },
+          body: { login, password, role },
         });
 
         createMessage.innerHTML = renderSuccessBanner("Пользователь создан");

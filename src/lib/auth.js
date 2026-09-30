@@ -93,6 +93,7 @@ function getCurrentUserFromRequest(req) {
 
   return {
     id: session.user_id,
+    login: session.email,
     email: session.email,
     role: session.role,
     isActive: Boolean(session.is_active),

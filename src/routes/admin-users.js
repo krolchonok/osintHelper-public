@@ -10,7 +10,7 @@ const router = express.Router();
 const roleEnum = z.enum(["ADMIN", "USER"]);
 
 const createUserSchema = z.object({
-  email: z.string().email(),
+  login: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9._-]+$/),
   password: z.string().min(8),
   role: roleEnum.default("USER"),
 });
@@ -33,6 +33,7 @@ function selectUsers() {
     .all()
     .map((row) => ({
       id: row.id,
+      login: row.email,
       email: row.email,
       role: row.role,
       isActive: Boolean(row.is_active),
@@ -82,8 +83,8 @@ router.post("/users", requireApiUser("ADMIN"), async (req, res) => {
   }
 
   const { db } = getDbState();
-  const email = parsed.data.email.trim().toLowerCase();
-  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  const login = parsed.data.login.trim().toLowerCase();
+  const existing = db.prepare("SELECT id FROM users WHERE lower(email) = ?").get(login);
 
   if (existing) {
     res.status(409).json({ error: "User already exists" });
@@ -97,7 +98,7 @@ router.post("/users", requireApiUser("ADMIN"), async (req, res) => {
   db.prepare(`
     INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at)
     VALUES (?, ?, ?, ?, 1, ?, ?)
-  `).run(id, email, passwordHash, parsed.data.role, now, now);
+  `).run(id, login, passwordHash, parsed.data.role, now, now);
 
   const user = db
     .prepare(`
@@ -111,6 +112,7 @@ router.post("/users", requireApiUser("ADMIN"), async (req, res) => {
     ok: true,
     user: {
       id: user.id,
+      login: user.email,
       email: user.email,
       role: user.role,
       isActive: Boolean(user.is_active),
@@ -191,6 +193,7 @@ router.put("/users/:id", requireApiUser("ADMIN"), async (req, res) => {
     ok: true,
     user: {
       id: user.id,
+      login: user.email,
       email: user.email,
       role: user.role,
       isActive: Boolean(user.is_active),

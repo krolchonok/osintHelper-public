@@ -6,10 +6,11 @@ services:
       - .env
     environment:
       PORT: 3001
+      APP_BASE_URL: http://10.0.0.16:3001
       SQLITE_PATH: /data/app.db
       ENABLE_INLINE_WORKER: "true"
     ports:
-      - "3001:3001"
+      - "10.0.0.16:3001:3001"
     volumes:
       - .:/app
       - /app/node_modules

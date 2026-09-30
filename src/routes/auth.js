@@ -15,13 +15,13 @@ const { isSystemInitialized, validateSetupToken, markSetupTokenUsed } = require(
 const router = express.Router();
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  login: z.string().trim().min(1).max(128),
   password: z.string().min(1),
 });
 
 const setupSchema = z.object({
   token: z.string().min(16),
-  email: z.string().email(),
+  login: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9._-]+$/),
   password: z.string().min(8),
 });
 
@@ -32,12 +32,12 @@ router.post("/login", async (req, res) => {
     return;
   }
 
-  const email = parsed.data.email.trim().toLowerCase();
+  const login = parsed.data.login.trim().toLowerCase();
 
   const { db } = getDbState();
   const user = db
-    .prepare("SELECT id, email, role, is_active, password_hash FROM users WHERE email = ? LIMIT 1")
-    .get(email);
+    .prepare("SELECT id, email, role, is_active, password_hash FROM users WHERE lower(email) = ? LIMIT 1")
+    .get(login);
 
   if (!user || !user.is_active) {
     res.status(401).json({ error: "Invalid credentials" });
@@ -57,7 +57,7 @@ router.post("/login", async (req, res) => {
     ok: true,
     user: {
       id: user.id,
-      email: user.email,
+      login: user.email,
       role: user.role,
     },
   });
@@ -99,7 +99,7 @@ router.post("/setup", async (req, res) => {
   }
 
   const { db } = getDbState();
-  const email = parsed.data.email.trim().toLowerCase();
+  const login = parsed.data.login.trim().toLowerCase();
   const passwordHash = await hashPassword(parsed.data.password);
 
   const tx = db.transaction((payload) => {
@@ -119,13 +119,13 @@ router.post("/setup", async (req, res) => {
     db.prepare(`
       INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at)
       VALUES (?, ?, ?, 'ADMIN', 1, ?, ?)
-    `).run(userId, payload.email, payload.passwordHash, now, now);
+    `).run(userId, payload.login, payload.passwordHash, now, now);
 
     markSetupTokenUsed(tokenRow.id);
 
     return {
       id: userId,
-      email: payload.email,
+      login: payload.login,
       role: "ADMIN",
     };
   });
@@ -133,7 +133,7 @@ router.post("/setup", async (req, res) => {
   try {
     const user = tx({
       token: parsed.data.token,
-      email,
+      login,
       passwordHash,
     });
 
