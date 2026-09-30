@@ -49,6 +49,8 @@ const SUPPORTED_PASSIVE_SOURCE_IDS = [
 ];
 
 let httpErrorLogReady = null;
+let commonCrawlIndexesCache = null;
+let commonCrawlIndexesCachedAt = 0;
 
 async function ensureHttpErrorLogPath() {
   if (!config.httpErrorLogEnabled) {
@@ -442,40 +444,36 @@ async function fetchHudsonRock(domain) {
 }
 
 async function fetchCommonCrawl(domain) {
-  const indexes = await requestJson("https://index.commoncrawl.org/collinfo.json", {
-    source: "commoncrawl",
-  });
-
-  const rows = Array.isArray(indexes) ? indexes : [];
-  const currentYear = new Date().getUTCFullYear();
-  const selected = [];
-
-  for (let offset = 0; offset < 3; offset += 1) {
-    const year = String(currentYear - offset);
-    const row = rows.find((item) => String(item?.id || "").includes(year) && item?.["cdx-api"]);
-    if (row) {
-      selected.push(row["cdx-api"]);
-    }
+  const now = Date.now();
+  if (!commonCrawlIndexesCache || now - commonCrawlIndexesCachedAt > 60 * 60 * 1000) {
+    commonCrawlIndexesCache = await requestJson("https://index.commoncrawl.org/collinfo.json", {
+      source: "commoncrawl",
+      headers: { "User-Agent": "osintHelper/1.0 (+https://github.com/krolchonok/osintHelper)" },
+    });
+    commonCrawlIndexesCachedAt = now;
   }
 
+  const rows = Array.isArray(commonCrawlIndexesCache) ? commonCrawlIndexesCache : [];
+  const latest = rows
+    .filter((item) => item?.id && item?.["cdx-api"])
+    .sort((a, b) => String(b.id).localeCompare(String(a.id)))[0];
+
   const found = new Set();
-  for (const apiUrl of selected) {
-    try {
-      const text = await requestText(`${apiUrl}?url=*.${encodeURIComponent(domain)}`, {
-        source: "commoncrawl",
-      });
-      const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-      for (const line of lines) {
-        let decoded = line;
-        try {
-          decoded = decodeURIComponent(line);
-        } catch {}
-        for (const host of extractHostsFromText(decoded, domain)) {
-          found.add(host);
-        }
-      }
-    } catch {
-      // ignore failed index
+  if (!latest) return [];
+
+  const queryUrl = new URL(latest["cdx-api"]);
+  queryUrl.searchParams.set("url", `*.${domain}`);
+  queryUrl.searchParams.set("output", "json");
+  queryUrl.searchParams.set("fl", "url");
+  queryUrl.searchParams.set("limit", "1000");
+  const text = await requestText(queryUrl.toString(), {
+    source: "commoncrawl",
+    headers: { "User-Agent": "osintHelper/1.0 (+https://github.com/krolchonok/osintHelper)" },
+  });
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    for (const host of extractHostsFromText(line, domain)) {
+      found.add(host);
     }
   }
 
