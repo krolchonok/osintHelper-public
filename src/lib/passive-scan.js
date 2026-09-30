@@ -36,6 +36,7 @@ const SUPPORTED_PASSIVE_SOURCE_IDS = [
   "reconeer",
   "securitytrails",
   "shodan",
+  "zoomeye",
   "threatbook",
   "urlscan",
   "virustotal",
@@ -694,6 +695,40 @@ async function fetchShodan(domain, token) {
   return Array.from(found).map((host) => ({ host, sources: ["shodan"] }));
 }
 
+async function fetchZoomEye(domain, token) {
+  const found = new Set();
+  const maxPages = 5;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const endpoint = `https://api.zoomeye.ai/domain/search?q=${encodeURIComponent(domain)}&type=1&page=${page}`;
+    try {
+      const data = await requestJson(endpoint, {
+        source: "zoomeye",
+        headers: {
+          "API-KEY": token,
+        },
+      });
+
+      const list = Array.isArray(data?.list) ? data.list : [];
+      for (const item of list) {
+        const host = normalizeHost(item?.name);
+        if (host && inScope(host, domain)) {
+          found.add(host);
+        }
+      }
+
+      if (list.length === 0 || list.length < 20) {
+        break;
+      }
+    } catch (err) {
+      console.error(`[passive][zoomeye] error page=${page}:`, err.message);
+      break;
+    }
+  }
+
+  return Array.from(found).map((host) => ({ host, sources: ["zoomeye"] }));
+}
+
 function createNetlasKeyRotator(keys) {
   let index = 0;
   return {
@@ -1150,6 +1185,17 @@ async function runWebPassiveScan(domain, onProgress, scanScope) {
     });
   } else {
     console.log("[passive][skip] source=shodan reason=missing_or_disabled_token");
+  }
+
+  const zoomeyeToken = getProviderToken(providerSettings, "zoomeye");
+  if (zoomeyeToken) {
+    sources.push({
+      name: "zoomeye",
+      category: "extended",
+      fetcher: (targetDomain) => fetchZoomEye(targetDomain, zoomeyeToken),
+    });
+  } else {
+    console.log("[passive][skip] source=zoomeye reason=missing_or_disabled_token");
   }
 
   const netlasToken = getProviderToken(providerSettings, "netlas");

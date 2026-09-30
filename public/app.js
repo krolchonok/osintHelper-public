@@ -2818,6 +2818,7 @@
               <div class="tool-nav-group-label">Инфраструктура</div>
               <button class="btn btn-ghost" id="tab-asn-btn" type="button">${ICON_ASN}<span>ASN</span></button>
               <button class="btn btn-ghost" id="tab-nmap-btn" type="button">${ICON_TERMINAL}<span>Nmap</span></button>
+              <button class="btn btn-ghost" id="tab-ip-overlaps-btn" type="button">${ICON_GLOBE}<span>Совпадения по IP</span></button>
             </div>
             <div class="tool-nav-group">
               <div class="tool-nav-group-label">Проект</div>
@@ -2825,6 +2826,20 @@
               <button class="btn btn-ghost" id="tab-labor-btn" type="button">${ICON_CLOCK}<span>Трудозатраты</span></button>
             </div>
           </nav>
+          <details class="panel" style="margin-top: 15px;" open>
+            <summary style="cursor: pointer; font-weight: bold; font-size: 1.1rem; padding: 10px 15px; user-select: none;">
+              Готовый проект
+            </summary>
+            <div style="padding: 15px; display: flex; flex-direction: column; gap: 20px;">
+              <div id="nmap-panel" class="project-data-panel">
+                ${buildNmapPanel(project, projectDomains)}
+              </div>
+              <div id="labor-panel" class="project-data-panel" style="border-top: 1px solid var(--border); padding-top: 15px;">
+                <h3 style="margin-top: 0; margin-bottom: 10px;">Трудозатраты</h3>
+                <div id="labor-panel-root"></div>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div class="project-column project-column-right">
@@ -3063,9 +3078,6 @@
               <div id="asn-action-message"></div>
               <div id="asn-table-root"></div>
             </div>
-            <div id="labor-panel" class="project-data-panel" hidden>
-              <div id="labor-panel-root"></div>
-            </div>
             <div id="ready-panel" class="project-data-panel" hidden>
               <div class="stack-md project-data-toolbar-stack">
                 <div class="toolbar-row project-panel-toolbar">
@@ -3083,8 +3095,16 @@
               <div id="ready-action-message"></div>
               <div id="ready-table-root"></div>
             </div>
-            <div id="nmap-panel" class="project-data-panel" hidden>
-              ${buildNmapPanel(project, projectDomains)}
+            <div id="ip-overlaps-panel" class="project-data-panel" hidden>
+              <div class="stack-md project-data-toolbar-stack">
+                <div class="row wrap project-panel-toolbar">
+                  <button class="btn btn-primary" id="ip-overlaps-scan-btn" type="button">Запустить скан IP</button>
+                  <button class="btn btn-secondary" id="ip-overlaps-refresh-btn" type="button">Обновить</button>
+                </div>
+                <div class="hint">Группировка поддоменов по IP. Запуск скана выполняет reverse IP-запросы через HackerTarget, чтобы определить глобальное кол-во доменов на IP (отличие VDS от хостинга).</div>
+              </div>
+              <div id="ip-overlaps-action-message"></div>
+              <div id="ip-overlaps-table-root"></div>
             </div>
           </section>
 
@@ -3142,8 +3162,7 @@
     const tabIntelxBtn = document.getElementById("tab-intelx-btn");
     const tabAsnBtn = document.getElementById("tab-asn-btn");
     const tabReadyBtn = document.getElementById("tab-ready-btn");
-    const tabNmapBtn = document.getElementById("tab-nmap-btn");
-    const tabLaborBtn = document.getElementById("tab-labor-btn");
+    const tabIpOverlapsBtn = document.getElementById("tab-ip-overlaps-btn");
     const subdomainsPanel = document.getElementById("subdomains-panel");
     const whoisPanel = document.getElementById("whois-panel");
     const webarchivePanel = document.getElementById("webarchive-panel");
@@ -3155,6 +3174,11 @@
     const readyPanel = document.getElementById("ready-panel");
     const nmapPanel = document.getElementById("nmap-panel");
     const laborPanel = document.getElementById("labor-panel");
+    const ipOverlapsPanel = document.getElementById("ip-overlaps-panel");
+    const ipOverlapsTableRoot = document.getElementById("ip-overlaps-table-root");
+    const ipOverlapsRefreshBtn = document.getElementById("ip-overlaps-refresh-btn");
+    const ipOverlapsScanBtn = document.getElementById("ip-overlaps-scan-btn");
+    const ipOverlapsActionMessageEl = document.getElementById("ip-overlaps-action-message");
     const laborPanelRoot = document.getElementById("labor-panel-root");
     const asnActionMessageEl = document.getElementById("asn-action-message");
     const asnTableRoot = document.getElementById("asn-table-root");
@@ -3334,8 +3358,7 @@
       const showIntelx = activeDataTab === "intelx";
       const showAsn = activeDataTab === "asn";
       const showReady = activeDataTab === "ready";
-      const showNmap = activeDataTab === "nmap";
-      const showLabor = activeDataTab === "labor";
+      const showIpOverlaps = activeDataTab === "ip-overlaps";
       subdomainsPanel.hidden = !showSubdomains;
       whoisPanel.hidden = !showWhois;
       webarchivePanel.hidden = !showWebarchive;
@@ -3345,8 +3368,7 @@
       intelxPanel.hidden = !showIntelx;
       asnPanel.hidden = !showAsn;
       readyPanel.hidden = !showReady;
-      nmapPanel.hidden = !showNmap;
-      laborPanel.hidden = !showLabor;
+      ipOverlapsPanel.hidden = !showIpOverlaps;
       tabSubdomainsBtn.className = showSubdomains ? "btn btn-primary" : "btn btn-ghost";
       tabWhoisBtn.className = showWhois ? "btn btn-primary" : "btn btn-ghost";
       tabWebarchiveBtn.className = showWebarchive ? "btn btn-primary" : "btn btn-ghost";
@@ -3356,8 +3378,7 @@
       tabIntelxBtn.className = showIntelx ? "btn btn-primary" : "btn btn-ghost";
       tabAsnBtn.className = showAsn ? "btn btn-primary" : "btn btn-ghost";
       tabReadyBtn.className = showReady ? "btn btn-primary" : "btn btn-ghost";
-      tabNmapBtn.className = showNmap ? "btn btn-primary" : "btn btn-ghost";
-      tabLaborBtn.className = showLabor ? "btn btn-primary" : "btn btn-ghost";
+      tabIpOverlapsBtn.className = showIpOverlaps ? "btn btn-primary" : "btn btn-ghost";
     }
 
     function createRunsSignature(list) {
@@ -3755,6 +3776,129 @@
       if (activeDataTab === "labor") renderLabor();
     }
 
+    async function renderIpOverlaps() {
+      const overlapsTableRoot = document.getElementById("ip-overlaps-table-root");
+      const actionMessageEl = document.getElementById("ip-overlaps-action-message");
+      if (!overlapsTableRoot) return;
+
+      overlapsTableRoot.innerHTML = `<div class="hint">Загрузка данных...</div>`;
+      try {
+        const payload = await api(`/api/projects/${encodeURIComponent(projectId)}/ip-overlaps`);
+        if (disposed) return;
+
+        const ipOverlaps = payload.ipOverlaps || [];
+        if (!ipOverlaps.length) {
+          overlapsTableRoot.innerHTML = `<div class="hint">Нет данных по резолвленным IP-адресам. Запустите DNS-резолв.</div>`;
+          return;
+        }
+
+        let html = `
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width: 180px;">IP-адрес</th>
+                <th style="width: 90px; text-align: center;">В проекте</th>
+                <th>Поддомены & Глобальное окружение</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        for (const group of ipOverlaps) {
+          const badgeClass = group.count > 1 ? "pill tiny danger" : "pill tiny";
+          const hostsHtml = group.hosts
+            .map((item) => `<span class="pill tiny mono">${escapeHtml(item.host)} <span class="hint">(${escapeHtml(String(item.type).toUpperCase())})</span></span>`)
+            .join(" ");
+
+          let globalInfoHtml = `<span class="hint" style="font-size: 0.85rem;">Нет данных сканирования. Нажмите кнопку «Скан IP» слева.</span>`;
+          if (group.globalScan) {
+            const globalCount = group.globalScan.count;
+            const globalDomains = group.globalScan.domains || [];
+
+            let hostTypeLabel = "";
+            let hostTypeClass = "pill tiny";
+            if (globalCount === 0) {
+              hostTypeLabel = "Локальный / Нет доменов";
+              hostTypeClass = "pill tiny secondary";
+            } else if (globalCount > 30) {
+              hostTypeLabel = "Виртуальный хостинг (Shared)";
+              hostTypeClass = "pill tiny danger";
+            } else {
+              hostTypeLabel = "VDS / Выделенный сервер";
+              hostTypeClass = "pill tiny";
+            }
+
+            const domainsShown = globalDomains.slice(0, 15);
+            const extraCount = globalDomains.length - domainsShown.length;
+            const domainsText = domainsShown.map(d => `<span class="pill tiny mono">${escapeHtml(d)}</span>`).join(" ") +
+              (extraCount > 0 ? ` <span class="hint">и ещё +${extraCount}</span>` : "");
+
+            globalInfoHtml = `
+              <div style="margin-bottom: 6px;">
+                <span class="${hostTypeClass}">${hostTypeLabel}</span>
+                <strong>(${globalCount} доменов обнаружено)</strong>
+              </div>
+              <div class="row wrap" style="gap: 5px; font-family: monospace;">${domainsText || '<span class="hint">нет внешних доменов</span>'}</div>
+            `;
+          }
+
+          html += `
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td class="mono" style="vertical-align: top; padding-top: 12px;">
+                <strong>${escapeHtml(group.ip)}</strong>
+                <div style="margin-top: 5px;">
+                  <button class="btn btn-secondary btn-xs scan-single-ip-btn" data-ip="${escapeHtml(group.ip)}" type="button" style="padding: 2px 6px; font-size: 11px;">
+                    Скан IP
+                  </button>
+                </div>
+              </td>
+              <td style="text-align: center; vertical-align: top; padding-top: 12px;"><span class="${badgeClass}">${group.count}</span></td>
+              <td style="vertical-align: top; padding-top: 12px;">
+                <div style="margin-bottom: 10px;">
+                  <div class="hint" style="margin-bottom: 4px; font-size: 0.85rem;">Поддомены в проекте:</div>
+                  <div class="row wrap" style="gap: 5px;">${hostsHtml}</div>
+                </div>
+                <div style="border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 8px;">
+                  <div class="hint" style="margin-bottom: 4px; font-size: 0.85rem;">Глобальное окружение на IP (поиск хостинга):</div>
+                  ${globalInfoHtml}
+                </div>
+              </td>
+            </tr>
+          `;
+        }
+
+        html += `
+            </tbody>
+          </table>
+        `;
+        overlapsTableRoot.innerHTML = html;
+        if (actionMessageEl) actionMessageEl.innerHTML = "";
+
+        document.querySelectorAll(".scan-single-ip-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const ip = btn.getAttribute("data-ip");
+            if (!ip) return;
+            btn.disabled = true;
+            try {
+              await api(`/api/projects/${encodeURIComponent(projectId)}/reverse-ip-task`, {
+                method: "POST",
+                body: { ip },
+              });
+              showPopup(`Скан для IP ${ip} запущен в очереди`, "success");
+              await refreshRuns();
+            } catch (error) {
+              showPopup(friendlyError(error, `Не удалось запустить скан для IP ${ip}`), "error");
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+      } catch (err) {
+        console.error(err);
+        overlapsTableRoot.innerHTML = `<div class="error-text">Ошибка загрузки данных: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
     function renderActiveDataTabContent() {
       if (activeDataTab === "subdomains") {
         renderSubdomains();
@@ -3774,10 +3918,8 @@
         renderAsn();
       } else if (activeDataTab === "ready") {
         renderReady();
-      } else if (activeDataTab === "nmap") {
-        // Static command panel.
-      } else if (activeDataTab === "labor") {
-        renderLabor();
+      } else if (activeDataTab === "ip-overlaps") {
+        renderIpOverlaps();
       }
     }
 
@@ -5108,15 +5250,30 @@
       void refreshAvailabilityInfo();
     });
 
-    tabNmapBtn.addEventListener("click", () => {
-      activeDataTab = "nmap";
+    tabIpOverlapsBtn.addEventListener("click", () => {
+      activeDataTab = "ip-overlaps";
       renderDataTab();
+      renderIpOverlaps();
     });
 
-    tabLaborBtn.addEventListener("click", () => {
-      activeDataTab = "labor";
-      renderDataTab();
-      void refreshLaborInfo();
+    ipOverlapsRefreshBtn.addEventListener("click", () => {
+      renderIpOverlaps();
+    });
+
+    ipOverlapsScanBtn.addEventListener("click", async () => {
+      const confirmed = window.confirm("Запустить глобальный скан IP через HackerTarget для выявления размещенных доменов?");
+      if (!confirmed) return;
+
+      ipOverlapsScanBtn.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(projectId)}/reverse-ip-task`, { method: "POST", body: {} });
+        showPopup("Скан IP запущен в очереди", "success");
+        await refreshRuns();
+      } catch (error) {
+        showPopup(friendlyError(error, "Не удалось запустить скан IP"), "error");
+      } finally {
+        ipOverlapsScanBtn.disabled = false;
+      }
     });
 
     nmapPanel.addEventListener("click", async (event) => {
@@ -5876,6 +6033,8 @@
     renderRuns(true);
     renderSubdomains();
     renderDataTab();
+    renderLabor();
+    void refreshLaborInfo();
     void refreshSubdomains(true).catch((error) => {
       if (disposed) {
         return;

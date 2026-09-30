@@ -93,6 +93,12 @@ const providerCatalog = [
       { text: "Yandex Search API Документация", url: "https://yandex.ru/dev/xml/" },
     ],
   },
+  {
+    id: "zoomeye",
+    title: "ZoomEye",
+    description: "Cyberspace search engine for passive subdomain discovery (using domain/search API).",
+    helpLinks: [{ text: "ZoomEye Profile", url: "https://www.zoomeye.org/profile" }],
+  },
 ];
 
 const providerMap = new Map(providerCatalog.map((item) => [item.id, item]));

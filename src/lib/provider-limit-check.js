@@ -300,6 +300,26 @@ async function checkProviderLimit(provider, token) {
     };
   }
 
+  if (providerId === "zoomeye") {
+    const { data } = await requestJson("https://api.zoomeye.ai/v2/userinfo", {
+      method: "POST",
+      headers: {
+        "API-KEY": rawToken,
+        "Content-Type": "application/json",
+      },
+    });
+    const sub = data?.data?.subscription || {};
+    const points = typeof sub.points === "number" ? sub.points : 0;
+    const zoomeyePoints = typeof sub.zoomeye_points === "number" ? sub.zoomeye_points : 0;
+    return {
+      provider: providerId,
+      summary: `points=${points}, zoomeye_points=${zoomeyePoints}, plan=${sub.plan || "Free"}`,
+      limit: null,
+      remaining: points + zoomeyePoints,
+      details: data || null,
+    };
+  }
+
   const probes = {
     bevigil: {
       url: `https://osint.bevigil.com/api/${encodeURIComponent("example.com")}/subdomains/`,

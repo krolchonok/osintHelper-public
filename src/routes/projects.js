@@ -1459,6 +1459,72 @@ router.get("/:id/subdomains", requireApiUser(), (req, res) => {
   res.json(payload);
 });
 
+router.get("/:id/ip-overlaps", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const rows = db
+    .prepare(`
+      SELECT d.value AS ip, s.host AS host, d.record_type AS type
+      FROM dns_records d
+      JOIN subdomains s ON d.subdomain_id = s.id
+      WHERE d.project_id = ? AND d.record_type IN ('A', 'AAAA')
+      ORDER BY d.value ASC, s.host ASC
+    `)
+    .all(id);
+
+  const groups = {};
+  for (const row of rows) {
+    if (!groups[row.ip]) {
+      groups[row.ip] = [];
+    }
+    if (!groups[row.ip].some(item => item.host === row.host)) {
+      groups[row.ip].push({ host: row.host, type: row.type });
+    }
+  }
+
+  const reverseRows = db
+    .prepare("SELECT ip, domains_json, count, updated_at FROM project_reverse_ip WHERE project_id = ?")
+    .all(id);
+
+  const reverseMap = new Map(
+    reverseRows.map((row) => [
+      row.ip,
+      {
+        domains: JSON.parse(row.domains_json || "[]"),
+        count: row.count,
+        updatedAt: row.updated_at,
+      },
+    ]),
+  );
+
+  const payload = Object.entries(groups)
+    .map(([ip, hosts]) => {
+      const scanData = reverseMap.get(ip) || null;
+      return {
+        ip,
+        hosts,
+        count: hosts.length,
+        globalScan: scanData
+          ? {
+              domains: scanData.domains,
+              count: scanData.count,
+              updatedAt: scanData.updatedAt,
+            }
+          : null,
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip));
+
+  res.json({ ipOverlaps: payload });
+});
+
 function selectProjectSubdomainsByIds(projectId, subdomainIds) {
   const { db } = getDbState();
   const normalized = Array.from(new Set((subdomainIds || []).map((item) => String(item || "").trim()).filter(Boolean)));
@@ -2923,6 +2989,30 @@ router.post("/:id/ready-check-task", requireApiUser(), (req, res) => {
     taskKind: "READY_CHECK",
   });
   res.json({ ok: true, runId: run.id, taskKind: "READY_CHECK" });
+});
+
+router.post("/:id/reverse-ip-task", requireApiUser(), (req, res) => {
+  const { db } = getDbState();
+  const { id } = req.params;
+  const project = db.prepare("SELECT id FROM projects WHERE id = ? LIMIT 1").get(id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const ip = req.body?.ip ? String(req.body.ip).trim() : null;
+  const taskPayload = ip ? { ip } : null;
+
+  const run = startRun(id, "PASSIVE_SCAN", { scanScope: "core", taskKind: "REVERSE_IP", taskPayload });
+  enqueueScanJob({
+    runId: run.id,
+    projectId: id,
+    type: "PASSIVE_SCAN",
+    scanScope: run.scanScope,
+    taskKind: "REVERSE_IP",
+    taskPayload,
+  });
+  res.json({ ok: true, runId: run.id, taskKind: "REVERSE_IP" });
 });
 
 router.delete("/:id/asn", requireApiUser(), (req, res) => {
