@@ -12,6 +12,7 @@ const { netlasRouter } = require("./routes/netlas");
 const { egrulRouter } = require("./routes/egrul");
 const { adminUsersRouter } = require("./routes/admin-users");
 const { startScanWorker } = require("./lib/job-queue");
+const { logWorkerFailure } = require("./lib/worker-logging");
 const { initAdminBootstrap } = require("./lib/bootstrap");
 
 const app = express();
@@ -157,9 +158,8 @@ async function start() {
     scanWorker = startScanWorker({
       concurrency: config.workerConcurrency,
       pollIntervalMs: config.workerPollIntervalMs,
-      onError(error, job) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[worker] failed ${job.runId}: ${message}`);
+      onError(error, job, timing) {
+        logWorkerFailure(error, job, timing);
       },
     });
     console.log(

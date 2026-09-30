@@ -125,11 +125,12 @@ function startScanWorker(options = {}) {
 
   async function processJob(job) {
     active += 1;
+    const startedAt = Date.now();
 
     try {
       await executeRun(job);
     } catch (error) {
-      onError(error, job);
+      onError(error, job, { durationMs: Date.now() - startedAt });
     } finally {
       finalizeStmt.run(job.runId);
       active -= 1;
