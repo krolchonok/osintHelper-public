@@ -2828,7 +2828,7 @@
           </nav>
           <details class="panel" style="margin-top: 15px;" open>
             <summary style="cursor: pointer; font-weight: bold; font-size: 1.1rem; padding: 10px 15px; user-select: none;">
-              Готовый проект
+              Обзор проекта
             </summary>
             <div style="padding: 15px; display: flex; flex-direction: column; gap: 20px;">
               <div id="nmap-panel" class="project-data-panel">
@@ -3084,7 +3084,7 @@
                   <div class="toolbar-cluster">
                     <label class="toggle">
                       <input type="checkbox" id="ready-mode-toggle" ${readyModeEnabled ? "checked" : ""} />
-                      Готовый проект
+                      Режим готовности
                     </label>
                     <button class="btn btn-primary" id="ready-check-run-btn" type="button" ${readyModeEnabled ? "" : "disabled"}>${ICON_CHECK_CIRCLE}<span>Проверить доступность</span></button>
                     <button class="btn btn-ghost" id="ready-check-refresh-btn" type="button">${ICON_REFRESH}<span>Обновить</span></button>
