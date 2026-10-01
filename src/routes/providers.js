@@ -14,6 +14,7 @@ const {
   getProviderRuntimeSettings,
   getHttpsProxySettings,
   updateHttpsProxySettings,
+  listProxyOperators,
 } = require("../lib/provider-settings");
 const { checkProviderLimit } = require("../lib/provider-limit-check");
 const { getDbState } = require("../db");
@@ -38,7 +39,7 @@ const intelxKeySchema = z.object({
 
 router.get("/providers", requireApiUser("ADMIN"), (req, res) => {
   const providers = listProviderSettings();
-  res.json({ providers, httpsProxy: getHttpsProxySettings() });
+  res.json({ providers, proxyOperators: listProxyOperators(), httpsProxy: getHttpsProxySettings() });
 });
 
 router.put("/providers/proxy", requireApiUser("ADMIN"), (req, res) => {

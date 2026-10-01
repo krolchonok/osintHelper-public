@@ -15,6 +15,11 @@ function parseNetlasKeys(rawToken) {
 const { providerCatalog, providerMap } = require("./providers");
 const { createId, nowIso } = require("./utils");
 
+const proxyOperatorIds = new Set([
+  "commoncrawl", "crtsh", "hackertarget", "waybackarchive", "hudsonrock",
+  "dork-google", "dork-bing", "dork-yandex", "dork-duckduckgo", "dork-google-api", "dork-yandex-api",
+]);
+
 function readEnvFileValue(filePath, key) {
   const resolvedPath = path.resolve(process.cwd(), filePath);
   if (!fs.existsSync(resolvedPath)) {
@@ -413,6 +418,22 @@ function getHttpsProxySettings() {
   catch { return { url: "", providers: [] }; }
 }
 
+function listProxyOperators() {
+  return [
+    { id: "commoncrawl", title: "Common Crawl" },
+    { id: "waybackarchive", title: "WebArchive / Wayback Machine" },
+    { id: "hudsonrock", title: "Hudson Rock" },
+    { id: "hackertarget", title: "HackerTarget" },
+    { id: "crtsh", title: "crt.sh" },
+    { id: "dork-google", title: "Dork: Google" },
+    { id: "dork-bing", title: "Dork: Bing" },
+    { id: "dork-yandex", title: "Dork: Yandex" },
+    { id: "dork-duckduckgo", title: "Dork: DuckDuckGo" },
+    { id: "dork-google-api", title: "Dork: Google API" },
+    { id: "dork-yandex-api", title: "Dork: Yandex API" },
+  ];
+}
+
 function updateHttpsProxySettings(input) {
   const url = String(input.url || "").trim();
   if (url) {
@@ -420,7 +441,7 @@ function updateHttpsProxySettings(input) {
     try { parsed = new URL(url); } catch { throw new Error("Некорректный URL прокси"); }
     if (parsed.protocol !== "https:") throw new Error("Прокси должен использовать HTTPS");
   }
-  const providers = [...new Set((Array.isArray(input.providers) ? input.providers : []).filter((id) => providerMap.has(id)))];
+  const providers = [...new Set((Array.isArray(input.providers) ? input.providers : []).filter((id) => providerMap.has(id) || proxyOperatorIds.has(id)))];
   const value = JSON.stringify({ url, providers });
   const { db } = getDbState();
   db.prepare(`INSERT INTO app_settings (key, value_json, updated_at) VALUES ('https_proxy', ?, ?)
@@ -444,4 +465,5 @@ module.exports = {
   getProviderRuntimeSettings,
   getHttpsProxySettings,
   updateHttpsProxySettings,
+  listProxyOperators,
 };

@@ -6131,6 +6131,7 @@
       ? payload.providers
       : [];
     const httpsProxy = payload && payload.httpsProxy ? payload.httpsProxy : { url: "", providers: [] };
+    const proxyOperators = Array.isArray(payload && payload.proxyOperators) ? payload.proxyOperators : [];
     const intelxProvider = providers.find((provider) => provider.provider === "intelx") || null;
 
     const rows = providers
@@ -6262,6 +6263,7 @@
           </div>
           <div class="row wrap" id="https-proxy-providers">
             ${providers.map((provider) => `<label class="toggle"><input type="checkbox" value="${escapeHtml(provider.provider)}" ${httpsProxy.providers.includes(provider.provider) ? "checked" : ""} /> ${escapeHtml(provider.title || provider.provider)}</label>`).join("")}
+            ${proxyOperators.map((operator) => `<label class="toggle"><input type="checkbox" value="${escapeHtml(operator.id)}" ${httpsProxy.providers.includes(operator.id) ? "checked" : ""} /> ${escapeHtml(operator.title)}</label>`).join("")}
           </div>
           <div id="https-proxy-message" class="hint"></div>
         </section>
