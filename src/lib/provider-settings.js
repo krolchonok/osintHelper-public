@@ -406,6 +406,28 @@ function getProviderRuntimeSettings() {
     });
 }
 
+function getHttpsProxySettings() {
+  const { db } = getDbState();
+  const row = db.prepare("SELECT value_json FROM app_settings WHERE key = 'https_proxy'").get();
+  try { return row ? JSON.parse(row.value_json) : { url: "", providers: [] }; }
+  catch { return { url: "", providers: [] }; }
+}
+
+function updateHttpsProxySettings(input) {
+  const url = String(input.url || "").trim();
+  if (url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { throw new Error("Некорректный URL прокси"); }
+    if (parsed.protocol !== "https:") throw new Error("Прокси должен использовать HTTPS");
+  }
+  const providers = [...new Set((Array.isArray(input.providers) ? input.providers : []).filter((id) => providerMap.has(id)))];
+  const value = JSON.stringify({ url, providers });
+  const { db } = getDbState();
+  db.prepare(`INSERT INTO app_settings (key, value_json, updated_at) VALUES ('https_proxy', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`).run(value, nowIso());
+  return { url, providers };
+}
+
 module.exports = {
   add2ipKey,
   addIntelxKey,
@@ -420,4 +442,6 @@ module.exports = {
   updateProviderSetting,
   buildProviderConfigYaml,
   getProviderRuntimeSettings,
+  getHttpsProxySettings,
+  updateHttpsProxySettings,
 };

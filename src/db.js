@@ -154,6 +154,12 @@ function initSchema(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS project_whois (
       project_id TEXT PRIMARY KEY,
       data_json TEXT NOT NULL,

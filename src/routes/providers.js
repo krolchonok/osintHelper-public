@@ -12,6 +12,8 @@ const {
   removeNetlasKey,
   updateProviderSetting,
   getProviderRuntimeSettings,
+  getHttpsProxySettings,
+  updateHttpsProxySettings,
 } = require("../lib/provider-settings");
 const { checkProviderLimit } = require("../lib/provider-limit-check");
 const { getDbState } = require("../db");
@@ -36,7 +38,12 @@ const intelxKeySchema = z.object({
 
 router.get("/providers", requireApiUser("ADMIN"), (req, res) => {
   const providers = listProviderSettings();
-  res.json({ providers });
+  res.json({ providers, httpsProxy: getHttpsProxySettings() });
+});
+
+router.put("/providers/proxy", requireApiUser("ADMIN"), (req, res) => {
+  try { res.json({ ok: true, httpsProxy: updateHttpsProxySettings(req.body || {}) }); }
+  catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Invalid proxy settings" }); }
 });
 
 router.put("/providers", requireApiUser("ADMIN"), (req, res) => {

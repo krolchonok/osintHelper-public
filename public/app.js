@@ -6130,6 +6130,7 @@
     const providers = Array.isArray(payload && payload.providers)
       ? payload.providers
       : [];
+    const httpsProxy = payload && payload.httpsProxy ? payload.httpsProxy : { url: "", providers: [] };
     const intelxProvider = providers.find((provider) => provider.provider === "intelx") || null;
 
     const rows = providers
@@ -6252,6 +6253,19 @@
           <p>Токены шифруются при хранении (AES-256-GCM в SQLite).</p>
         </section>
 
+        <section class="panel">
+          <h2>HTTPS-прокси</h2>
+          <p class="hint">Выберите провайдеров, чьи внешние HTTPS-запросы должны идти через прокси.</p>
+          <div class="row wrap">
+            <input id="https-proxy-url" class="text-input" type="url" placeholder="https://user:password@proxy.example:8443" value="${escapeHtml(httpsProxy.url || "")}" />
+            <button class="btn btn-primary" id="https-proxy-save" type="button">Сохранить прокси</button>
+          </div>
+          <div class="row wrap" id="https-proxy-providers">
+            ${providers.map((provider) => `<label class="toggle"><input type="checkbox" value="${escapeHtml(provider.provider)}" ${httpsProxy.providers.includes(provider.provider) ? "checked" : ""} /> ${escapeHtml(provider.title || provider.provider)}</label>`).join("")}
+          </div>
+          <div id="https-proxy-message" class="hint"></div>
+        </section>
+
         ${intelxProvider ? `
           <section class="panel intelx-limits-panel">
             <div class="panel-header">
@@ -6289,6 +6303,20 @@
         </section>
       </div>
     `;
+
+    document.getElementById("https-proxy-save")?.addEventListener("click", async () => {
+      const button = document.getElementById("https-proxy-save");
+      const message = document.getElementById("https-proxy-message");
+      button.disabled = true;
+      message.textContent = "Сохранение...";
+      try {
+        const selected = [...document.querySelectorAll("#https-proxy-providers input:checked")].map((input) => input.value);
+        await api("/api/settings/providers/proxy", { method: "PUT", body: { url: document.getElementById("https-proxy-url").value, providers: selected } });
+        message.textContent = "Настройки прокси сохранены";
+      } catch (error) {
+        message.textContent = friendlyError(error, "Не удалось сохранить прокси");
+      } finally { button.disabled = false; }
+    });
 
     const intelxLimitsCheckBtn = document.getElementById("intelx-limits-check-btn");
     const intelxLimitsMessage = document.getElementById("intelx-limits-message");

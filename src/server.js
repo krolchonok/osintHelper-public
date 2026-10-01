@@ -13,10 +13,12 @@ const { egrulRouter } = require("./routes/egrul");
 const { adminUsersRouter } = require("./routes/admin-users");
 const { startScanWorker } = require("./lib/job-queue");
 const { logWorkerFailure } = require("./lib/worker-logging");
+const { installHttpsProxyRouting } = require("./lib/https-proxy");
 const { initAdminBootstrap } = require("./lib/bootstrap");
 
 const app = express();
 const { dbPath } = openDatabase(config.sqlitePath);
+installHttpsProxyRouting();
 const publicDir = path.resolve(process.cwd(), "public");
 const spaIndexPath = path.join(publicDir, "index.html");
 

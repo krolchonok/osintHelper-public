@@ -4,8 +4,10 @@ const { openDatabase } = require("./db");
 const { config } = require("./lib/config");
 const { startScanWorker } = require("./lib/job-queue");
 const { logWorkerFailure } = require("./lib/worker-logging");
+const { installHttpsProxyRouting } = require("./lib/https-proxy");
 
 openDatabase(config.sqlitePath);
+installHttpsProxyRouting();
 
 const worker = startScanWorker({
   concurrency: config.workerConcurrency,
